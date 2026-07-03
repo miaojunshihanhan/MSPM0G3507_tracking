@@ -38,7 +38,7 @@
 
 /*========================== 可调参数 ==========================*/
 #define CAR_INITIAL_ENABLED          0U      // 上电初始状态：0=停止，1=自动运行
-#define CAR_BASE_SPEED               10       // 小车基础速度：编码器计数/5ms
+#define CAR_BASE_SPEED               6       // 小车基础速度：编码器计数/5ms
 #define TRACKING_WEIGHT_S1           (-5)    // 最左侧灰度传感器权重
 #define TRACKING_WEIGHT_S2           (-2)    // 左中侧灰度传感器权重
 #define TRACKING_WEIGHT_S3           2       // 右中侧灰度传感器权重
