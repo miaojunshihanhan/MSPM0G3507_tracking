@@ -30,108 +30,58 @@
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "board.h"
-#include "stdio.h"
+#include "car.h"
 #include "key.h"
-#include "motor.h"
 #include "oled.h"
 #include "tracking.h"
 
-/*========================== 可调参数 ==========================*/
-#define CAR_INITIAL_ENABLED          0U      // 上电初始状态：0=停止，1=自动运行
-#define CAR_BASE_SPEED               6       // 小车基础速度：编码器计数/5ms
-#define TRACKING_WEIGHT_S1           (-5)    // 最左侧灰度传感器权重
-#define TRACKING_WEIGHT_S2           (-2)    // 左中侧灰度传感器权重
-#define TRACKING_WEIGHT_S3           2       // 右中侧灰度传感器权重
-#define TRACKING_WEIGHT_S4           5       // 最右侧灰度传感器权重
-#define TRACKING_KP                  8.0f    // 循迹PID比例系数
-#define TRACKING_KI                  0.0f    // 循迹PID积分系数
-#define TRACKING_KD                  0.0f    // 循迹PID微分系数
-#define SPEED_KP                     0.0f   // 速度PID比例系数
-#define SPEED_KI                     0.0f    // 速度PID积分系数
-#define SPEED_KD                     0.0f    // 速度PID微分系数
+/*========================== 小车可调参数 ==========================*/
+#define CAR_INITIAL_ENABLED          0U      // 上电状态：0=停止，1=自动循迹
+#define CAR_BASE_SPEED               6       // 直行目标速度，单位：编码器计数/5ms
+#define CAR_TRACKING_OUTPUT_MAX      20      // 循迹PID输出限幅，需大于0
+#define CAR_CORNER_SPEED_SCALE       10      // 大转弯时外侧轮速度倍数，越大速度差越大
+#define CAR_BASE_PWM                 500     // 基础前馈PWM，速度PID为0时主要由它驱动
+#define CAR_PWM_MAX                  3200    // 电机最大PWM，范围建议为0~3200
+
+#define TRACKING_WEIGHT_S1           (-6)    // 最左侧探头权重
+#define TRACKING_WEIGHT_S2           (-3)    // 左中探头权重
+#define TRACKING_WEIGHT_S3           3       // 右中探头权重
+#define TRACKING_WEIGHT_S4           6       // 最右侧探头权重
+#define TRACKING_KP                  10.0f    // 循迹比例：越大，偏离黑线时转向越猛
+#define TRACKING_KI                  0.0f     // 循迹积分：消除长期偏差，过大会左右摆动
+#define TRACKING_KD                  0.0f     // 循迹微分：抑制转向变化过快
+
+#define SPEED_KP                     0.0f     // 速度比例：轮速偏差越大，修正越强
+#define SPEED_KI                     0.0f     // 速度积分：消除长期轮速误差，过大会振荡
+#define SPEED_KD                     0.0f     // 速度微分：抑制轮速突变，一般先保持为0
 /*==================================================================*/
 
-volatile int32_t Get_Encoder_countA, encoderA_cnt;
-volatile int32_t Get_Encoder_countB, encoderB_cnt;
-volatile int32_t TargetVelocityA, TargetVelocityB;
-volatile int32_t PWMA, PWMB;
-volatile uint8_t CarEnabled = CAR_INITIAL_ENABLED;
-volatile unsigned int delay_times = 0;
-
-static int32_t ClampTargetSpeed(int32_t speed)
+static const Car_Config CarConfig =
 {
-	if(speed > CAR_BASE_SPEED * 4) return CAR_BASE_SPEED * 4;
-	if(speed < 0) return 0;
-	return speed;
-}
-
-// 每5 ms执行一次：循迹外环分配目标速度，速度内环计算两轮PWM
-static void Cascade_Control_Update(void)
-{
-	int32_t trackingCorrection;
-	int32_t speedCorrection;
-
-	Key_Scan_5ms();
-
-	// 编码器只用于OLED显示，不参与电机控制
-	encoderA_cnt = Get_Encoder_countA;
-	encoderB_cnt = Get_Encoder_countB;
-	Get_Encoder_countA = 0;
-	Get_Encoder_countB = 0;
-
-	if(!CarEnabled)
-	{
-		Tracking_PID_Reset();
-		Motor_PID_Reset();
-		TargetVelocityA = 0;
-		TargetVelocityB = 0;
-		PWMA = 0;
-		PWMB = 0;
-		Set_PWM(0, 0);
-		return;
-	}
-
-	trackingCorrection = Tracking_PID_Calculate(20);
-	if(trackingCorrection >= 20)
-	{
-		TargetVelocityA = CAR_BASE_SPEED * 4;
-		TargetVelocityB = 0;
-	}
-	else if(trackingCorrection <= -20)
-	{
-		TargetVelocityA = 0;
-		TargetVelocityB = CAR_BASE_SPEED * 4;
-	}
-	else
-	{
-		speedCorrection = trackingCorrection * CAR_BASE_SPEED / 20;
-		TargetVelocityA = ClampTargetSpeed(CAR_BASE_SPEED + speedCorrection);
-		TargetVelocityB = ClampTargetSpeed(CAR_BASE_SPEED - speedCorrection);
-	}
-	PWMA = Velocity_A(TargetVelocityA, ABS(encoderA_cnt));
-	PWMB = Velocity_B(TargetVelocityB, ABS(encoderB_cnt));
-	Set_PWM(PWMA, PWMB);
-}
+	CAR_INITIAL_ENABLED,
+	CAR_BASE_SPEED,
+	CAR_TRACKING_OUTPUT_MAX,
+	CAR_CORNER_SPEED_SCALE,
+	CAR_BASE_PWM,
+	CAR_PWM_MAX,
+	{TRACKING_WEIGHT_S1, TRACKING_WEIGHT_S2,
+		TRACKING_WEIGHT_S3, TRACKING_WEIGHT_S4},
+	TRACKING_KP,
+	TRACKING_KI,
+	TRACKING_KD,
+	SPEED_KP,
+	SPEED_KI,
+	SPEED_KD
+};
 
 int main(void)
 {
-	int32_t currentPwmA, currentPwmB;
 	int32_t targetSpeed;
-	int32_t speedA, speedB;
 	uint8_t trackingSensors;
-
-	Tracking_Kp = TRACKING_KP;
-	Tracking_Ki = TRACKING_KI;
-	Tracking_Kd = TRACKING_KD;
-	Tracking_Weights[0] = TRACKING_WEIGHT_S1;
-	Tracking_Weights[1] = TRACKING_WEIGHT_S2;
-	Tracking_Weights[2] = TRACKING_WEIGHT_S3;
-	Tracking_Weights[3] = TRACKING_WEIGHT_S4;
-	Motor_PID_SetParameters(SPEED_KP, SPEED_KI, SPEED_KD);
-	Motor_PID_SetBase(500, CAR_BASE_SPEED);
-	Motor_SetPWMMax(3000);
+	Car_Status carStatus;
 
 	board_init();
+	Car_Init(&CarConfig);
 	OLED_Init();
 	OLED_Clear();
     DL_Timer_startCounter(PWM_0_INST);
@@ -146,20 +96,15 @@ int main(void)
     {
 		if(click())
 		{
-			CarEnabled = !CarEnabled;
-			Tracking_PID_Reset();
-			Motor_PID_Reset();
+			Car_Toggle();//小车开关
 		}
 
-		currentPwmA = PWMA;
-		currentPwmB = PWMB;
-		targetSpeed = CarEnabled ? CAR_BASE_SPEED : 0;
-		speedA = ABS(encoderA_cnt);
-		speedB = ABS(encoderB_cnt);
+		Car_GetStatus(&carStatus);//获取小车状态
+		targetSpeed = carStatus.enabled ? CAR_BASE_SPEED : 0;
 		trackingSensors = Tracking_ReadSensors();
 
 		OLED_ShowString(0, 0, (uint8_t *)"RUN:", 8, 1);
-		OLED_ShowNum(24, 0, CarEnabled, 1, 8, 1);
+		OLED_ShowNum(24, 0, carStatus.enabled, 1, 8, 1);
 		OLED_ShowString(36, 0, (uint8_t *)"SPD:", 8, 1);
 		OLED_ShowNum(60, 0, targetSpeed, 3, 8, 1);
 		OLED_ShowString(84, 0, (uint8_t *)"S:", 8, 1);
@@ -168,13 +113,13 @@ int main(void)
 		OLED_ShowNum(108, 0, (trackingSensors >> 2) & 0x01, 1, 8, 1);
 		OLED_ShowNum(114, 0, (trackingSensors >> 3) & 0x01, 1, 8, 1);
 		OLED_ShowString(0, 16, (uint8_t *)"A ACT:", 8, 1);
-		OLED_ShowNum(36, 16, speedA, 3, 8, 1);
+		OLED_ShowNum(36, 16, carStatus.actualSpeedA, 3, 8, 1);
 		OLED_ShowString(0, 32, (uint8_t *)"B ACT:", 8, 1);
-		OLED_ShowNum(36, 32, speedB, 3, 8, 1);
+		OLED_ShowNum(36, 32, carStatus.actualSpeedB, 3, 8, 1);
 		OLED_ShowString(0, 48, (uint8_t *)"PWM A:", 8, 1);
-		OLED_ShowNum(36, 48, currentPwmA, 4, 8, 1);
+		OLED_ShowNum(36, 48, carStatus.pwmA, 4, 8, 1);
 		OLED_ShowString(66, 48, (uint8_t *)"B:", 8, 1);
-		OLED_ShowNum(78, 48, currentPwmB, 4, 8, 1);
+		OLED_ShowNum(78, 48, carStatus.pwmB, 4, 8, 1);
         OLED_Refresh();
         delay_ms(10);
     }
@@ -187,7 +132,8 @@ void TIMER_0_INST_IRQHandler(void)
 	switch(DL_TimerA_getPendingInterrupt(TIMER_0_INST))
 	{
 		case DL_TIMER_IIDX_ZERO:
-			Cascade_Control_Update();
+			Key_Scan_5ms();
+			Car_ControlUpdate5ms();
 			break;
 		default:
 			break;

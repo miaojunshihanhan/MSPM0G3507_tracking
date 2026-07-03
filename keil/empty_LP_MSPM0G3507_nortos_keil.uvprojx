@@ -585,6 +585,16 @@
               <FilePath>..\Hardware\tracking.h</FilePath>
             </File>
             <File>
+              <FileName>car.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Hardware\car.c</FilePath>
+            </File>
+            <File>
+              <FileName>car.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Hardware\car.h</FilePath>
+            </File>
+            <File>
               <FileName>bmp.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Hardware\bmp.h</FilePath>
