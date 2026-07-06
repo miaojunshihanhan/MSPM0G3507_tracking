@@ -34,19 +34,52 @@
 #include "board.h"
 #include "motor.h"
 #include "car.h"
+#include "encoder.h"
+
+volatile int32_t speedA = 0;
+volatile int32_t speedB = 0;
+volatile int refreshFlag = 0;
+volatile int tick5ms = 0;
 
 int main()
 {
 	board_init();
 	OLED_Init();
 	OLED_Clear();
-	car_forward(500);
-	
+
+	NVIC_ClearPendingIRQ(ENCODERA_INT_IRQN);
+	NVIC_EnableIRQ(ENCODERA_INT_IRQN);
+	NVIC_ClearPendingIRQ(ENCODERB_INT_IRQN);
+	NVIC_EnableIRQ(ENCODERB_INT_IRQN);
+
+	NVIC_ClearPendingIRQ(TIMA0_INT_IRQn);
+	NVIC_EnableIRQ(TIMA0_INT_IRQn);
+
 	while(1)
 	{
-		OLED_ShowString(0, 0, (uint8_t *)"RUN:", 8, 1);
-		OLED_Refresh();
-        delay_ms(10);
+		if(refreshFlag)
+		{
+			refreshFlag = 0;
+			OLED_ShowString(0, 0, (uint8_t *)"A:", 8, 1);
+			OLED_ShowNum(12, 0, speedA, 4, 8, 1);
+			OLED_ShowString(0, 10, (uint8_t *)"B:", 8, 1);
+			OLED_ShowNum(12, 10, speedB, 4, 8, 1);
+			OLED_Refresh();
+		}
 	}
 }
 
+void TIMA0_IRQHandler(void)
+{
+	speedA = Get_Encoder_countA;
+	Get_Encoder_countA = 0;
+	speedB = Get_Encoder_countB;
+	Get_Encoder_countB = 0;
+
+	tick5ms++;
+	if(tick5ms >= 20)
+	{
+		tick5ms = 0;
+		refreshFlag = 1;
+	}
+}

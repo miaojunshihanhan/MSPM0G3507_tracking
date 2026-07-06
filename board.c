@@ -15,6 +15,9 @@ void board_init(void)
 	NVIC_ClearPendingIRQ(UART_0_INST_INT_IRQN);
 	//使能串口中断
 	NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
+	//HEART心跳中断
+	NVIC_ClearPendingIRQ(TIMA0_INT_IRQn);
+	NVIC_EnableIRQ(TIMA0_INT_IRQn);
 	
 	printf("Board Init [[ ** LCKFB ** ]]\r\n");
 }

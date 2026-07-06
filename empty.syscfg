@@ -181,13 +181,14 @@ SYSTICK.systickEnable     = true;
 SYSTICK.interruptPriority = "0";
 SYSTICK.period            = 32;
 
-TIMER1.$name            = "TIMER_0";
-TIMER1.timerClkDiv      = 8;
-TIMER1.timerClkPrescale = 200;
-TIMER1.timerPeriod      = "5 ms";
-TIMER1.timerStartTimer  = true;
-TIMER1.timerMode        = "PERIODIC";
-TIMER1.interrupts       = ["ZERO"];
+TIMER1.timerClkDiv        = 8;
+TIMER1.timerPeriod        = "5 ms";
+TIMER1.timerStartTimer    = true;
+TIMER1.timerMode          = "PERIODIC";
+TIMER1.interrupts         = ["ZERO"];
+TIMER1.$name              = "HEART";
+TIMER1.timerClkPrescale   = 100;
+TIMER1.peripheral.$assign = "TIMA0";
 
 UART1.$name                    = "UART_0";
 UART1.uartClkSrc               = "MFCLK";
@@ -220,4 +221,3 @@ GPIO9.associatedPins[0].pin.$suggestSolution = "PA27";
 GPIO9.associatedPins[1].pin.$suggestSolution = "PA26";
 GPIO9.associatedPins[2].pin.$suggestSolution = "PA25";
 GPIO9.associatedPins[3].pin.$suggestSolution = "PA24";
-TIMER1.peripheral.$suggestSolution           = "TIMA0";

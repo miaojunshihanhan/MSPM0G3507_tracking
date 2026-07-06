@@ -98,11 +98,11 @@ extern "C" {
 
 
 
-/* Defines for TIMER_0 */
-#define TIMER_0_INST                                                     (TIMA0)
-#define TIMER_0_INST_IRQHandler                                 TIMA0_IRQHandler
-#define TIMER_0_INST_INT_IRQN                                   (TIMA0_INT_IRQn)
-#define TIMER_0_INST_LOAD_VALUE                                            (99U)
+/* Defines for HEART */
+#define HEART_INST                                                       (TIMA0)
+#define HEART_INST_IRQHandler                                   TIMA0_IRQHandler
+#define HEART_INST_INT_IRQN                                     (TIMA0_INT_IRQn)
+#define HEART_INST_LOAD_VALUE                                             (199U)
 
 
 
@@ -206,15 +206,6 @@ extern "C" {
 /* Defines for S4: GPIOA.24 with pinCMx 54 on package pin 25 */
 #define Gray_S4_PIN                                             (DL_GPIO_PIN_24)
 #define Gray_S4_IOMUX                                            (IOMUX_PINCM54)
-/* Port definition for Pin Group OLED */
-#define OLED_PORT                                                        (GPIOA)
-
-/* Defines for SCL: GPIOA.0 with pinCMx 1 on package pin 33 */
-#define OLED_SCL_PIN                                             (DL_GPIO_PIN_0)
-#define OLED_SCL_IOMUX                                            (IOMUX_PINCM1)
-/* Defines for SDA: GPIOA.1 with pinCMx 2 on package pin 34 */
-#define OLED_SDA_PIN                                             (DL_GPIO_PIN_1)
-#define OLED_SDA_IOMUX                                            (IOMUX_PINCM2)
 /* Defines for S5: GPIOA.16 with pinCMx 38 on package pin 9 */
 #define Gray_S5_PIN                                             (DL_GPIO_PIN_16)
 #define Gray_S5_IOMUX                                            (IOMUX_PINCM38)
@@ -227,6 +218,15 @@ extern "C" {
 /* Defines for S8: GPIOA.23 with pinCMx 53 on package pin 24 */
 #define Gray_S8_PIN                                             (DL_GPIO_PIN_23)
 #define Gray_S8_IOMUX                                            (IOMUX_PINCM53)
+/* Port definition for Pin Group OLED */
+#define OLED_PORT                                                        (GPIOA)
+
+/* Defines for SCL: GPIOA.0 with pinCMx 1 on package pin 33 */
+#define OLED_SCL_PIN                                             (DL_GPIO_PIN_0)
+#define OLED_SCL_IOMUX                                            (IOMUX_PINCM1)
+/* Defines for SDA: GPIOA.1 with pinCMx 2 on package pin 34 */
+#define OLED_SDA_PIN                                             (DL_GPIO_PIN_1)
+#define OLED_SDA_IOMUX                                            (IOMUX_PINCM2)
 
 
 
@@ -238,7 +238,7 @@ void SYSCFG_DL_initPower(void);
 void SYSCFG_DL_GPIO_init(void);
 void SYSCFG_DL_SYSCTL_init(void);
 void SYSCFG_DL_PWM_0_init(void);
-void SYSCFG_DL_TIMER_0_init(void);
+void SYSCFG_DL_HEART_init(void);
 void SYSCFG_DL_UART_0_init(void);
 
 void SYSCFG_DL_SYSTICK_init(void);

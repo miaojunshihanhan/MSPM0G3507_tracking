@@ -41,7 +41,7 @@
 #include "ti_msp_dl_config.h"
 
 DL_TimerA_backupConfig gPWM_0Backup;
-DL_TimerA_backupConfig gTIMER_0Backup;
+DL_TimerA_backupConfig gHEARTBackup;
 
 /*
  *  ======== SYSCFG_DL_init ========
@@ -54,12 +54,12 @@ SYSCONFIG_WEAK void SYSCFG_DL_init(void)
     /* Module-Specific Initializations*/
     SYSCFG_DL_SYSCTL_init();
     SYSCFG_DL_PWM_0_init();
-    SYSCFG_DL_TIMER_0_init();
+    SYSCFG_DL_HEART_init();
     SYSCFG_DL_UART_0_init();
     SYSCFG_DL_SYSTICK_init();
     /* Ensure backup structures have no valid state */
 	gPWM_0Backup.backupRdy 	= false;
-	gTIMER_0Backup.backupRdy 	= false;
+	gHEARTBackup.backupRdy 	= false;
 
 
 }
@@ -72,7 +72,7 @@ SYSCONFIG_WEAK bool SYSCFG_DL_saveConfiguration(void)
     bool retStatus = true;
 
 	retStatus &= DL_TimerA_saveConfiguration(PWM_0_INST, &gPWM_0Backup);
-	retStatus &= DL_TimerA_saveConfiguration(TIMER_0_INST, &gTIMER_0Backup);
+	retStatus &= DL_TimerA_saveConfiguration(HEART_INST, &gHEARTBackup);
 
     return retStatus;
 }
@@ -83,7 +83,7 @@ SYSCONFIG_WEAK bool SYSCFG_DL_restoreConfiguration(void)
     bool retStatus = true;
 
 	retStatus &= DL_TimerA_restoreConfiguration(PWM_0_INST, &gPWM_0Backup, false);
-	retStatus &= DL_TimerA_restoreConfiguration(TIMER_0_INST, &gTIMER_0Backup, false);
+	retStatus &= DL_TimerA_restoreConfiguration(HEART_INST, &gHEARTBackup, false);
 
     return retStatus;
 }
@@ -93,14 +93,14 @@ SYSCONFIG_WEAK void SYSCFG_DL_initPower(void)
     DL_GPIO_reset(GPIOA);
     DL_GPIO_reset(GPIOB);
     DL_TimerA_reset(PWM_0_INST);
-    DL_TimerA_reset(TIMER_0_INST);
+    DL_TimerA_reset(HEART_INST);
     DL_UART_Main_reset(UART_0_INST);
 
 
     DL_GPIO_enablePower(GPIOA);
     DL_GPIO_enablePower(GPIOB);
     DL_TimerA_enablePower(PWM_0_INST);
-    DL_TimerA_enablePower(TIMER_0_INST);
+    DL_TimerA_enablePower(HEART_INST);
     DL_UART_Main_enablePower(UART_0_INST);
 
     delay_cycles(POWER_STARTUP_DELAY);
@@ -167,10 +167,6 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
 		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
 		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalOutput(OLED_SCL_IOMUX);
-
-    DL_GPIO_initDigitalOutput(OLED_SDA_IOMUX);
-
     DL_GPIO_initDigitalInputFeatures(Gray_S5_IOMUX,
 		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
 		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
@@ -186,6 +182,10 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
     DL_GPIO_initDigitalInputFeatures(Gray_S8_IOMUX,
 		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
 		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+
+    DL_GPIO_initDigitalOutput(OLED_SCL_IOMUX);
+
+    DL_GPIO_initDigitalOutput(OLED_SDA_IOMUX);
 
     DL_GPIO_clearPins(GPIOA, AIN1_PIN_12_PIN |
 		AIN2_PIN_13_PIN |
@@ -294,33 +294,33 @@ SYSCONFIG_WEAK void SYSCFG_DL_PWM_0_init(void) {
 /*
  * Timer clock configuration to be sourced by BUSCLK /  (4000000 Hz)
  * timerClkFreq = (timerClkSrc / (timerClkDivRatio * (timerClkPrescale + 1)))
- *   20000 Hz = 4000000 Hz / (8 * (199 + 1))
+ *   40000 Hz = 4000000 Hz / (8 * (99 + 1))
  */
-static const DL_TimerA_ClockConfig gTIMER_0ClockConfig = {
+static const DL_TimerA_ClockConfig gHEARTClockConfig = {
     .clockSel    = DL_TIMER_CLOCK_BUSCLK,
     .divideRatio = DL_TIMER_CLOCK_DIVIDE_8,
-    .prescale    = 199U,
+    .prescale    = 99U,
 };
 
 /*
  * Timer load value (where the counter starts from) is calculated as (timerPeriod * timerClockFreq) - 1
- * TIMER_0_INST_LOAD_VALUE = (5 ms * 20000 Hz) - 1
+ * HEART_INST_LOAD_VALUE = (5 ms * 40000 Hz) - 1
  */
-static const DL_TimerA_TimerConfig gTIMER_0TimerConfig = {
-    .period     = TIMER_0_INST_LOAD_VALUE,
+static const DL_TimerA_TimerConfig gHEARTTimerConfig = {
+    .period     = HEART_INST_LOAD_VALUE,
     .timerMode  = DL_TIMER_TIMER_MODE_PERIODIC,
     .startTimer = DL_TIMER_START,
 };
 
-SYSCONFIG_WEAK void SYSCFG_DL_TIMER_0_init(void) {
+SYSCONFIG_WEAK void SYSCFG_DL_HEART_init(void) {
 
-    DL_TimerA_setClockConfig(TIMER_0_INST,
-        (DL_TimerA_ClockConfig *) &gTIMER_0ClockConfig);
+    DL_TimerA_setClockConfig(HEART_INST,
+        (DL_TimerA_ClockConfig *) &gHEARTClockConfig);
 
-    DL_TimerA_initTimerMode(TIMER_0_INST,
-        (DL_TimerA_TimerConfig *) &gTIMER_0TimerConfig);
-    DL_TimerA_enableInterrupt(TIMER_0_INST , DL_TIMERA_INTERRUPT_ZERO_EVENT);
-    DL_TimerA_enableClock(TIMER_0_INST);
+    DL_TimerA_initTimerMode(HEART_INST,
+        (DL_TimerA_TimerConfig *) &gHEARTTimerConfig);
+    DL_TimerA_enableInterrupt(HEART_INST , DL_TIMERA_INTERRUPT_ZERO_EVENT);
+    DL_TimerA_enableClock(HEART_INST);
 
 
 
