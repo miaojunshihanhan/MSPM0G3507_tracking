@@ -7,6 +7,8 @@
  ***********************************************************/
 void GROUP1_IRQHandler(void)
 {
+	int Get_Encoder_countA=0;
+	int Get_Encoder_countB=0;
 	uint32_t encoderA_interrupt;
 	uint32_t encoderB_interrupt;
 

@@ -2,181 +2,38 @@
 #include "board.h"
 #include "motor.h"
 #include "tracking.h"
-
-volatile int32_t Get_Encoder_countA;
-volatile int32_t Get_Encoder_countB;
-
-static volatile uint8_t CarEnabled;
-static volatile int32_t BaseSpeed;
-static int32_t TrackingOutputMax;
-static int32_t CornerSpeedScale;
-static int32_t PwmMax;
-static volatile int32_t TargetSpeedA;
-static volatile int32_t TargetSpeedB;
-static volatile int32_t ActualSpeedA;
-static volatile int32_t ActualSpeedB;
-static volatile int32_t PwmA;
-static volatile int32_t PwmB;
-
-static int32_t Car_LimitPWM(int32_t pwm)
+//A为左，B为右
+void car_forward(int speed)
 {
-	if(pwm > PwmMax) return PwmMax;
-	if(pwm < 0) return 0;
-	return pwm;
+	AO_Control(1,speed);//1正转
+	BO_Control(1,speed);
 }
-
-static int32_t Car_ClampTargetSpeed(int32_t speed)
+void car_backward(int speed)
 {
-	int32_t maxSpeed = BaseSpeed * CornerSpeedScale;
-
-	if(speed > maxSpeed) return maxSpeed;
-	if(speed < 0) return 0;
-	return speed;
+	AO_Control(0,speed);//0反转
+	BO_Control(0,speed);
 }
-
-void Car_Init(const Car_Config *config)
+void car_turnLeft(int Left_speed,int Right_speed)
 {
-	uint8_t i;
-
-	CarEnabled = config->initialEnabled;
-	BaseSpeed = config->baseSpeed;
-	TrackingOutputMax = config->trackingOutputMax;
-	CornerSpeedScale = config->cornerSpeedScale;
-	PwmMax = config->pwmMax;
-
-	Tracking_Kp = config->trackingKp;
-	Tracking_Ki = config->trackingKi;
-	Tracking_Kd = config->trackingKd;
-	for(i = 0; i < 4; i++)
-	{
-		Tracking_Weights[i] = config->trackingWeights[i];
-	}
-
-	Motor_PID_SetParameters(config->speedKp, config->speedKi, config->speedKd);
-	Motor_PID_SetBase(config->basePwm, BaseSpeed);
-	Motor_SetPWMMax(PwmMax);
-	Motor_PID_Reset();
-	Tracking_PID_Reset();
-	Car_Stop();
+	AO_Control(1,Left_speed);
+	BO_Control(1,Right_speed);
 }
-
-void Car_Toggle(void)
+void car_turnRight(int Left_speed,int Right_speed)
 {
-	Car_SetEnabled(!CarEnabled);
+	AO_Control(1,Left_speed);
+	BO_Control(1,Right_speed);
 }
-
-void Car_SetEnabled(uint8_t enabled)
+void Self_left(int Left_speed,int Right_speed)
 {
-	CarEnabled = enabled ? 1U : 0U;
-	Motor_PID_Reset();
-	Tracking_PID_Reset();
-	if(!CarEnabled)
-	{
-		Car_Stop();
-	}
+	AO_Control(0,Left_speed);
+	BO_Control(1,Right_speed);
 }
-
-uint8_t Car_IsEnabled(void)
+void Self_right(int Left_speed,int Right_speed)
 {
-	return CarEnabled;
+	AO_Control(1,Left_speed);
+	BO_Control(0,Right_speed);
 }
-
-void Car_Forward(int32_t pwmA, int32_t pwmB)
+void Car_stop()
 {
-	PwmA = Car_LimitPWM(pwmA);
-	PwmB = Car_LimitPWM(pwmB);
-	Set_PWM(PwmA, PwmB);
-}
-
-void Car_Backward(int32_t pwmA, int32_t pwmB)
-{
-	PwmA = -Car_LimitPWM(pwmA);
-	PwmB = -Car_LimitPWM(pwmB);
-	Set_PWM(PwmA, PwmB);
-}
-
-void Car_Stop(void)
-{
-	PwmA = 0;
-	PwmB = 0;
-	Set_PWM(0, 0);
-}
-
-void Car_TurnLeft(int32_t pwm)
-{
-	Car_Forward(0, pwm);
-}
-
-void Car_TurnRight(int32_t pwm)
-{
-	Car_Forward(pwm, 0);
-}
-
-void Car_SpinLeft(int32_t pwm)
-{
-	PwmA = -Car_LimitPWM(pwm);
-	PwmB = Car_LimitPWM(pwm);
-	Set_PWM(PwmA, PwmB);
-}
-
-void Car_SpinRight(int32_t pwm)
-{
-	PwmA = Car_LimitPWM(pwm);
-	PwmB = -Car_LimitPWM(pwm);
-	Set_PWM(PwmA, PwmB);
-}
-
-void Car_ControlUpdate5ms(void)
-{
-	int32_t trackingCorrection;
-	int32_t speedCorrection;
-
-	ActualSpeedA = ABS(Get_Encoder_countA);
-	ActualSpeedB = ABS(Get_Encoder_countB);
-	Get_Encoder_countA = 0;
-	Get_Encoder_countB = 0;
-
-	if(!CarEnabled)
-	{
-		Tracking_PID_Reset();
-		Motor_PID_Reset();
-		TargetSpeedA = 0;
-		TargetSpeedB = 0;
-		Car_Stop();
-		return;
-	}
-
-	trackingCorrection = Tracking_PID_Calculate(TrackingOutputMax);
-	if(trackingCorrection >= TrackingOutputMax)
-	{
-		TargetSpeedA = BaseSpeed * CornerSpeedScale;
-		TargetSpeedB = 0;
-	}
-	else if(trackingCorrection <= -TrackingOutputMax)
-	{
-		TargetSpeedA = 0;
-		TargetSpeedB = BaseSpeed * CornerSpeedScale;
-	}
-	else
-	{
-		speedCorrection = trackingCorrection * BaseSpeed
-			/ TrackingOutputMax;
-		TargetSpeedA = Car_ClampTargetSpeed(BaseSpeed + speedCorrection);
-		TargetSpeedB = Car_ClampTargetSpeed(BaseSpeed - speedCorrection);
-	}
-
-	PwmA = Velocity_A(TargetSpeedA, ActualSpeedA);
-	PwmB = Velocity_B(TargetSpeedB, ActualSpeedB);
-	Car_Forward(PwmA, PwmB);
-}
-
-void Car_GetStatus(Car_Status *status)
-{
-	status->enabled = CarEnabled;
-	status->targetSpeedA = TargetSpeedA;
-	status->targetSpeedB = TargetSpeedB;
-	status->actualSpeedA = ActualSpeedA;
-	status->actualSpeedB = ActualSpeedB;
-	status->pwmA = PwmA;
-	status->pwmB = PwmB;
+	TB6612_Motor_Stop();
 }

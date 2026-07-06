@@ -1,13 +1,16 @@
 #ifndef _MOTOR_H
 #define _MOTOR_H
+
 #include "ti_msp_dl_config.h"
 #include "board.h"
 
-int Velocity_A(int TargetVelocity, int CurrentVelocity);
-int Velocity_B(int TargetVelocity, int CurrentVelocity);
-void Motor_PID_SetParameters(float kp, float ki, float kd);
-void Motor_PID_SetBase(int basePwm, int baseVelocity);
-void Motor_PID_Reset(void);
-void Motor_SetPWMMax(int pwmMax);
-void Set_PWM(int pwma,int pwmb);
+#define AIN1_OUT(X)  ( (X) ? (DL_GPIO_setPins(GPIOA, DL_GPIO_PIN_12)) : (DL_GPIO_clearPins(GPIOA, DL_GPIO_PIN_12)) )
+#define AIN2_OUT(X)  ( (X) ? (DL_GPIO_setPins(GPIOA, DL_GPIO_PIN_13)) : (DL_GPIO_clearPins(GPIOA, DL_GPIO_PIN_13)) )
+#define BIN1_OUT(X)  ( (X) ? (DL_GPIO_setPins(GPIOA, DL_GPIO_PIN_14)) : (DL_GPIO_clearPins(GPIOA, DL_GPIO_PIN_14)) )
+#define BIN2_OUT(X)  ( (X) ? (DL_GPIO_setPins(GPIOA, DL_GPIO_PIN_15)) : (DL_GPIO_clearPins(GPIOA, DL_GPIO_PIN_15)) )
+
+void TB6612_Motor_Stop(void);
+void AO_Control(uint8_t dir, uint32_t speed);
+void BO_Control(uint8_t dir, uint32_t speed);
+
 #endif
