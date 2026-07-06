@@ -38,11 +38,15 @@
 int main()
 {
 	board_init();
+	OLED_Init();
+	OLED_Clear();
 	car_forward(500);
 	
 	while(1)
 	{
-		
+		OLED_ShowString(0, 0, (uint8_t *)"RUN:", 8, 1);
+		OLED_Refresh();
+        delay_ms(10);
 	}
 }
 
