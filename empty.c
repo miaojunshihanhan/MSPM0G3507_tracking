@@ -61,9 +61,27 @@ int main()
 		{
 			refreshFlag = 0;
 			OLED_ShowString(0, 0, (uint8_t *)"A:", 8, 1);
-			OLED_ShowNum(12, 0, speedA, 4, 8, 1);
+			if(speedA >= 0)
+			{
+				OLED_ShowChar(12, 0, '+', 8, 1);
+				OLED_ShowNum(18, 0, speedA, 4, 8, 1);
+			}
+			else
+			{
+				OLED_ShowChar(12, 0, '-', 8, 1);
+				OLED_ShowNum(18, 0, -speedA, 4, 8, 1);
+			}
 			OLED_ShowString(0, 10, (uint8_t *)"B:", 8, 1);
-			OLED_ShowNum(12, 10, speedB, 4, 8, 1);
+			if(speedB >= 0)
+			{
+				OLED_ShowChar(12, 10, '+', 8, 1);
+				OLED_ShowNum(18, 10, speedB, 4, 8, 1);
+			}
+			else
+			{
+				OLED_ShowChar(12, 10, '-', 8, 1);
+				OLED_ShowNum(18, 10, -speedB, 4, 8, 1);
+			}
 			OLED_Refresh();
 		}
 	}
