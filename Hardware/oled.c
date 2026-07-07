@@ -5,6 +5,19 @@
 
 u8 OLED_GRAM[144][8];
 
+//显示8位二进制值
+//x,y:起点坐标
+//value:要显示的8位值
+//mode:0,反色显示;1,正常显示
+void OLED_ShowBits(u8 x,u8 y,u8 value,u8 mode)
+{
+	u8 i;
+	for(i=0;i<8;i++)
+	{
+		OLED_ShowChar((u8)(x+i*6),y,((value&(1<<i))?'1':'0'),8,mode);
+	}
+}
+
 //反显函数
 void OLED_ColorTurn(u8 i)
 {

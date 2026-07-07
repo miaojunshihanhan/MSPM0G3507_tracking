@@ -35,11 +35,11 @@
 #include "motor.h"
 #include "car.h"
 #include "encoder.h"
+#include "tracking.h"
 
 volatile int32_t speedA = 0;
 volatile int32_t speedB = 0;
-volatile int refreshFlag = 0;
-volatile int tick5ms = 0;
+volatile int8_t sensors;
 
 int main()
 {
@@ -57,34 +57,33 @@ int main()
 
 	while(1)
 	{
-		if(refreshFlag)
+		OLED_ShowString(0, 0, (uint8_t *)"A:", 8, 1);
+		if(speedA >= 0)
 		{
-			refreshFlag = 0;
-			OLED_ShowString(0, 0, (uint8_t *)"A:", 8, 1);
-			if(speedA >= 0)
-			{
-				OLED_ShowChar(12, 0, '+', 8, 1);
-				OLED_ShowNum(18, 0, speedA, 4, 8, 1);
-			}
-			else
-			{
-				OLED_ShowChar(12, 0, '-', 8, 1);
-				OLED_ShowNum(18, 0, -speedA, 4, 8, 1);
-			}
-			OLED_ShowString(0, 10, (uint8_t *)"B:", 8, 1);
-			if(speedB >= 0)
-			{
-				OLED_ShowChar(12, 10, '+', 8, 1);
-				OLED_ShowNum(18, 10, speedB, 4, 8, 1);
-			}
-			else
-			{
-				OLED_ShowChar(12, 10, '-', 8, 1);
-				OLED_ShowNum(18, 10, -speedB, 4, 8, 1);
-			}
-			OLED_Refresh();
+			OLED_ShowChar(12, 0, '+', 8, 1);
+			OLED_ShowNum(18, 0, speedA, 4, 8, 1);
 		}
-	}
+		else
+		{
+			OLED_ShowChar(12, 0, '-', 8, 1);
+			OLED_ShowNum(18, 0, -speedA, 4, 8, 1);
+		}
+		OLED_ShowString(0, 10, (uint8_t *)"B:", 8, 1);
+		if(speedB >= 0)
+		{
+			OLED_ShowChar(12, 10, '+', 8, 1);
+			OLED_ShowNum(18, 10, speedB, 4, 8, 1);
+		}
+		else
+		{
+			OLED_ShowChar(12, 10, '-', 8, 1);
+			OLED_ShowNum(18, 10, -speedB, 4, 8, 1);
+		}
+		sensors=Tracking_ReadSensors();
+		OLED_ShowBits(30,30, sensors, 1);
+		OLED_Refresh();
+		delay_ms(10);
+		}
 }
 
 void TIMA0_IRQHandler(void)
@@ -93,11 +92,4 @@ void TIMA0_IRQHandler(void)
 	Get_Encoder_countA = 0;
 	speedB = Get_Encoder_countB;
 	Get_Encoder_countB = 0;
-
-	tick5ms++;
-	if(tick5ms >= 20)
-	{
-		tick5ms = 0;
-		refreshFlag = 1;
-	}
 }

@@ -215,9 +215,9 @@ extern "C" {
 /* Defines for S7: GPIOA.21 with pinCMx 46 on package pin 17 */
 #define Gray_S7_PIN                                             (DL_GPIO_PIN_21)
 #define Gray_S7_IOMUX                                            (IOMUX_PINCM46)
-/* Defines for S8: GPIOA.23 with pinCMx 53 on package pin 24 */
-#define Gray_S8_PIN                                             (DL_GPIO_PIN_23)
-#define Gray_S8_IOMUX                                            (IOMUX_PINCM53)
+/* Defines for S8: GPIOA.7 with pinCMx 14 on package pin 49 */
+#define Gray_S8_PIN                                              (DL_GPIO_PIN_7)
+#define Gray_S8_IOMUX                                            (IOMUX_PINCM14)
 /* Port definition for Pin Group OLED */
 #define OLED_PORT                                                        (GPIOA)
 
