@@ -2,12 +2,39 @@
 
 set SYSCFG_PATH="C:\ti\sysconfig_1.20.0\sysconfig_cli.bat"
 
+set PROJ_DIR=%~1
+set PROJ_DIR=%PROJ_DIR:'=%
+
+set SYSCFG_FILE=%~2
+set SYSCFG_FILE=%SYSCFG_FILE:'=%
+
+:: Search for the directory containing the project's syscfg file
+set SYSCFG_DIR=%PROJ_DIR%
+set iter=0
+:syscfg_search_loop
+if exist %SYSCFG_DIR%\*.syscfg (
+    IF %SYSCFG_DIR:~-1%==\ SET SYSCFG_DIR=%SYSCFG_DIR:~0,-1%
+    goto syscfg_search_exit
+) else if %iter% geq 5 (
+	@echo "Couldn't find syscfg file"
+) else (
+	set /a iter=%iter%+1
+	set SYSCFG_DIR=%SYSCFG_DIR%..\
+	goto syscfg_search_loop
+)
+:syscfg_search_exit
+
+:: If ti_msp_dl_config.h already exists and SysConfig tool not found, skip generation
 if not exist "%SYSCFG_PATH%" (
+    if exist "%SYSCFG_DIR%\ti_msp_dl_config.h" (
+        echo SysConfig tool not found, using existing ti_msp_dl_config.h
+        exit /b 0
+    )
     echo.
     echo Couldn't find Sysconfig Tool %SYSCFG_PATH%
     echo "Update the file located at <sdk path>/tools/keil/syscfg.bat"
     echo.
-    exit
+    exit /b 0
 )
 
 echo Using Sysconfig Tool from %SYSCFG_PATH%

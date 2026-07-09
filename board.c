@@ -132,8 +132,8 @@ void UART_0_INST_IRQHandler(void)
 			{
 				recv0_buff[recv0_length++] = receivedData;
 
-				// 将保存的数据再发送出去，不想回传可以注释掉
-				uart0_send_char(receivedData);
+				// 回显接收到的字符
+				DL_UART_Main_transmitData(UART_0_INST, receivedData);
 			}
 			else
 			{

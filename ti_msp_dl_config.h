@@ -41,7 +41,6 @@
 #define ti_msp_dl_config_h
 
 #define CONFIG_MSPM0G350X
-#define CONFIG_MSPM0G3507
 
 #if defined(__ti_version__) || defined(__TI_COMPILER_VERSION__)
 #define SYSCONFIG_WEAK __attribute__((weak))
@@ -102,13 +101,12 @@ extern "C" {
 #define HEART_INST                                                       (TIMA0)
 #define HEART_INST_IRQHandler                                   TIMA0_IRQHandler
 #define HEART_INST_INT_IRQN                                     (TIMA0_INT_IRQn)
-#define HEART_INST_LOAD_VALUE                                             (199U)
+#define HEART_INST_LOAD_VALUE                                              (39U)
 
 
 
 /* Defines for UART_0 */
 #define UART_0_INST                                                        UART0
-#define UART_0_INST_FREQUENCY                                            4000000
 #define UART_0_INST_IRQHandler                                  UART0_IRQHandler
 #define UART_0_INST_INT_IRQN                                      UART0_INT_IRQn
 #define GPIO_UART_0_RX_PORT                                                GPIOA
@@ -119,7 +117,7 @@ extern "C" {
 #define GPIO_UART_0_IOMUX_TX                                     (IOMUX_PINCM21)
 #define GPIO_UART_0_IOMUX_RX_FUNC                      IOMUX_PINCM22_PF_UART0_RX
 #define GPIO_UART_0_IOMUX_TX_FUNC                      IOMUX_PINCM21_PF_UART0_TX
-#define UART_0_BAUD_RATE                                                  (9600)
+#define UART_0_BAUD_RATE                                                (9600)
 #define UART_0_IBRD_4_MHZ_9600_BAUD                                         (26)
 #define UART_0_FBRD_4_MHZ_9600_BAUD                                          (3)
 
@@ -191,33 +189,24 @@ extern "C" {
 #define ENCODERB_E2B_IIDX                                   (DL_GPIO_IIDX_DIO15)
 #define ENCODERB_E2B_PIN                                        (DL_GPIO_PIN_15)
 #define ENCODERB_E2B_IOMUX                                       (IOMUX_PINCM32)
-/* Port definition for Pin Group Gray */
-#define Gray_PORT                                                        (GPIOA)
+/* Port definition for Pin Group GrayA */
+#define GrayA_PORT                                                       (GPIOA)
 
-/* Defines for S1: GPIOA.27 with pinCMx 60 on package pin 31 */
-#define Gray_S1_PIN                                             (DL_GPIO_PIN_27)
-#define Gray_S1_IOMUX                                            (IOMUX_PINCM60)
-/* Defines for S2: GPIOA.26 with pinCMx 59 on package pin 30 */
-#define Gray_S2_PIN                                             (DL_GPIO_PIN_26)
-#define Gray_S2_IOMUX                                            (IOMUX_PINCM59)
-/* Defines for S3: GPIOA.25 with pinCMx 55 on package pin 26 */
-#define Gray_S3_PIN                                             (DL_GPIO_PIN_25)
-#define Gray_S3_IOMUX                                            (IOMUX_PINCM55)
-/* Defines for S4: GPIOA.24 with pinCMx 54 on package pin 25 */
-#define Gray_S4_PIN                                             (DL_GPIO_PIN_24)
-#define Gray_S4_IOMUX                                            (IOMUX_PINCM54)
-/* Defines for S5: GPIOA.16 with pinCMx 38 on package pin 9 */
-#define Gray_S5_PIN                                             (DL_GPIO_PIN_16)
-#define Gray_S5_IOMUX                                            (IOMUX_PINCM38)
-/* Defines for S6: GPIOA.17 with pinCMx 39 on package pin 10 */
-#define Gray_S6_PIN                                             (DL_GPIO_PIN_17)
-#define Gray_S6_IOMUX                                            (IOMUX_PINCM39)
-/* Defines for S7: GPIOA.21 with pinCMx 46 on package pin 17 */
-#define Gray_S7_PIN                                             (DL_GPIO_PIN_21)
-#define Gray_S7_IOMUX                                            (IOMUX_PINCM46)
-/* Defines for S8: GPIOA.7 with pinCMx 14 on package pin 49 */
-#define Gray_S8_PIN                                              (DL_GPIO_PIN_7)
-#define Gray_S8_IOMUX                                            (IOMUX_PINCM14)
+/* Defines for S1: GPIOA.26 with pinCMx 59 on package pin 30 */
+#define GrayA_S1_PIN                                            (DL_GPIO_PIN_26)
+#define GrayA_S1_IOMUX                                           (IOMUX_PINCM59)
+/* Defines for S2: GPIOA.27 with pinCMx 60 on package pin 31 */
+#define GrayA_S2_PIN                                            (DL_GPIO_PIN_27)
+#define GrayA_S2_IOMUX                                           (IOMUX_PINCM60)
+/* Defines for S3: GPIOA.24 with pinCMx 54 on package pin 25 */
+#define GrayA_S3_PIN                                            (DL_GPIO_PIN_24)
+#define GrayA_S3_IOMUX                                           (IOMUX_PINCM54)
+/* Defines for S4: GPIOA.25 with pinCMx 55 on package pin 26 */
+#define GrayA_S4_PIN                                            (DL_GPIO_PIN_25)
+#define GrayA_S4_IOMUX                                           (IOMUX_PINCM55)
+/* Defines for S7: GPIOA.22 with pinCMx 47 on package pin 18 */
+#define GrayA_S7_PIN                                            (DL_GPIO_PIN_22)
+#define GrayA_S7_IOMUX                                           (IOMUX_PINCM47)
 /* Port definition for Pin Group OLED */
 #define OLED_PORT                                                        (GPIOA)
 
@@ -227,7 +216,18 @@ extern "C" {
 /* Defines for SDA: GPIOA.1 with pinCMx 2 on package pin 34 */
 #define OLED_SDA_PIN                                             (DL_GPIO_PIN_1)
 #define OLED_SDA_IOMUX                                            (IOMUX_PINCM2)
+/* Port definition for Pin Group GraytB */
+#define GraytB_PORT                                                      (GPIOB)
 
+/* Defines for S5: GPIOB.24 with pinCMx 52 on package pin 23 */
+#define GraytB_S5_PIN                                           (DL_GPIO_PIN_24)
+#define GraytB_S5_IOMUX                                          (IOMUX_PINCM52)
+/* Defines for S6: GPIOB.25 with pinCMx 56 on package pin 27 */
+#define GraytB_S6_PIN                                           (DL_GPIO_PIN_25)
+#define GraytB_S6_IOMUX                                          (IOMUX_PINCM56)
+/* Defines for S8: GPIOB.20 with pinCMx 48 on package pin 19 */
+#define GraytB_S8_PIN                                           (DL_GPIO_PIN_20)
+#define GraytB_S8_IOMUX                                          (IOMUX_PINCM48)
 
 
 

@@ -135,57 +135,33 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
 
     DL_GPIO_initDigitalOutput(BIN2_Pin_Bin2_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(ENCODERA_E1A_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(ENCODERA_E1A_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(ENCODERA_E1B_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(ENCODERA_E1B_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(ENCODERB_E2A_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(ENCODERB_E2A_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(ENCODERB_E2B_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(ENCODERB_E2B_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(Gray_S1_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(GrayA_S1_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(Gray_S2_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(GrayA_S2_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(Gray_S3_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(GrayA_S3_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(Gray_S4_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(GrayA_S4_IOMUX);
 
-    DL_GPIO_initDigitalInputFeatures(Gray_S5_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
-
-    DL_GPIO_initDigitalInputFeatures(Gray_S6_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
-
-    DL_GPIO_initDigitalInputFeatures(Gray_S7_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
-
-    DL_GPIO_initDigitalInputFeatures(Gray_S8_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInput(GrayA_S7_IOMUX);
 
     DL_GPIO_initDigitalOutput(OLED_SCL_IOMUX);
 
     DL_GPIO_initDigitalOutput(OLED_SDA_IOMUX);
+
+    DL_GPIO_initDigitalInput(GraytB_S5_IOMUX);
+
+    DL_GPIO_initDigitalInput(GraytB_S6_IOMUX);
+
+    DL_GPIO_initDigitalInput(GraytB_S8_IOMUX);
 
     DL_GPIO_clearPins(GPIOA, AIN1_PIN_12_PIN |
 		AIN2_PIN_13_PIN |
@@ -221,19 +197,14 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
 
 SYSCONFIG_WEAK void SYSCFG_DL_SYSCTL_init(void)
 {
-
-	//Low Power Mode is configured to be SLEEP0
     DL_SYSCTL_setBORThreshold(DL_SYSCTL_BOR_THRESHOLD_LEVEL_0);
 
-    
-	DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_BASE);
-	/* Set default configuration */
-	DL_SYSCTL_disableHFXT();
-	DL_SYSCTL_disableSYSPLL();
+    DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_BASE);
+    DL_SYSCTL_disableHFXT();
+    DL_SYSCTL_disableSYSPLL();
     DL_SYSCTL_enableMFCLK();
-    /* INT_GROUP1 Priority */
-    NVIC_SetPriority(GPIOB_INT_IRQn, 0);
 
+    NVIC_SetPriority(GPIOB_INT_IRQn, 0);
 }
 
 
@@ -262,9 +233,6 @@ SYSCONFIG_WEAK void SYSCFG_DL_PWM_0_init(void) {
 
     DL_TimerA_initPWMMode(
         PWM_0_INST, (DL_TimerA_PWMConfig *) &gPWM_0Config);
-
-    // Set Counter control to the smallest CC index being used
-    DL_TimerA_setCounterControl(PWM_0_INST,DL_TIMER_CZC_CCCTL0_ZCOND,DL_TIMER_CAC_CCCTL0_ACOND,DL_TIMER_CLC_CCCTL0_LCOND);
 
     DL_TimerA_setCaptureCompareOutCtl(PWM_0_INST, DL_TIMER_CC_OCTL_INIT_VAL_LOW,
 		DL_TIMER_CC_OCTL_INV_OUT_DISABLED, DL_TIMER_CC_OCTL_SRC_FUNCVAL,
@@ -304,7 +272,7 @@ static const DL_TimerA_ClockConfig gHEARTClockConfig = {
 
 /*
  * Timer load value (where the counter starts from) is calculated as (timerPeriod * timerClockFreq) - 1
- * HEART_INST_LOAD_VALUE = (5 ms * 40000 Hz) - 1
+ * HEART_INST_LOAD_VALUE = (1 ms * 40000 Hz) - 1
  */
 static const DL_TimerA_TimerConfig gHEARTTimerConfig = {
     .period     = HEART_INST_LOAD_VALUE,
@@ -327,6 +295,7 @@ SYSCONFIG_WEAK void SYSCFG_DL_HEART_init(void) {
 
 
 }
+
 
 
 static const DL_UART_Main_ClockConfig gUART_0ClockConfig = {
