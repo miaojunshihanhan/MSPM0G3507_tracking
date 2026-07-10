@@ -72,7 +72,7 @@
           <BeforeMake>
             <RunUserProg1>1</RunUserProg1>
             <RunUserProg2>0</RunUserProg2>
-            <UserProg1Name>cmd.exe /C "$P../tools/keil/syscfg.bat '$P' empty.syscfg"</UserProg1Name>
+            <UserProg1Name>cmd.exe /C $P..\tools\keil\syscfg.bat $P empty.syscfg</UserProg1Name>
             <UserProg2Name></UserProg2Name>
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
             <UserProg2Dos16Mode>0</UserProg2Dos16Mode>
@@ -613,6 +613,16 @@
               <FileName>bmp.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Hardware\bmp.h</FilePath>
+            </File>
+            <File>
+              <FileName>w25q128.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Hardware\w25q128.c</FilePath>
+            </File>
+            <File>
+              <FileName>w25q128.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Hardware\w25q128.h</FilePath>
             </File>
           </Files>
         </Group>

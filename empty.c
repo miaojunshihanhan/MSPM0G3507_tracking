@@ -2,6 +2,7 @@
 #include "stdio.h"
 #include "oled.h"
 #include "key.h"
+#include "w25q128.h"
 
 volatile uint32_t timer_ms = 0;
 volatile uint32_t task_1ms_pending = 0;
@@ -11,11 +12,14 @@ volatile int32_t speedB = 0;
 volatile uint8_t uart_data = 0;
 
 #define ENCODER_DISPLAY_PERIOD_MS      (100u)
+#define FLASH_TEST_ADDR                (0x000000u)
+#define FLASH_TEST_LEN                 (16u)
 
 static void OLED_DisplayEncoderHeader(void);
 static void OLED_DisplayEncoderValues(int32_t encoder_a, int32_t encoder_b);
 static void OLED_EncoderDisplayTask(void);
 static void OLED_ShowInt32(u8 x, u8 y, int32_t num, u8 len, u8 size1, u8 mode);
+static void W25Q128_Test(void);
 
 int main()
 {
@@ -31,11 +35,14 @@ int main()
 	NVIC_EnableIRQ(TIMA0_INT_IRQn);
 
 	printf("MSPM0G3507 UART Test\r\n");
-	printf("System Clock: 4MHz\r\n");
-	printf("UART Baudrate: 9600\r\n");
+	printf("System Clock: 32MHz\r\n");
+	printf("UART Baudrate: 115200\r\n");
 	printf("LED will blink every 500ms\r\n");
 	printf("OLED displays encoder A/B every 100ms based on 1ms timer\r\n");
 	printf("Send any character to echo back\r\n");
+	printf("W25Q128 Flash Test Starting...\r\n");
+
+	W25Q128_Test();
 
 	while(1)
 	{
@@ -48,6 +55,7 @@ int main()
 			if(click())
 			{
 				printf("B21 pressed\r\n");
+				W25Q128_Test();
 			}
 
 			if(encoder_display_pending != 0u)
@@ -59,6 +67,80 @@ int main()
 			}
 		}
 	}
+}
+
+static void W25Q128_Test(void)
+{
+    uint16_t flash_id;
+    uint8_t write_buff[FLASH_TEST_LEN] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38,
+                                           0x39, 0x30, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46};
+    uint8_t read_buff[FLASH_TEST_LEN] = {0};
+    uint16_t i;
+    uint8_t test_pass = 1;
+
+    printf("=== W25Q128 Flash Test ===\r\n");
+
+    printf("Reading Flash ID...\r\n");
+    flash_id = W25Q128_readID();
+    printf("Flash ID: 0x%04X\r\n", flash_id);
+
+    if(flash_id == 0xEF17)
+    {
+        printf("W25Q128 Detected!\r\n");
+    }
+    else if(flash_id == 0xEF16)
+    {
+        printf("W25Q64 Detected!\r\n");
+    }
+    else if(flash_id == 0xEF15)
+    {
+        printf("W25Q32 Detected!\r\n");
+    }
+    else
+    {
+        printf("Unknown Flash Device!\r\n");
+    }
+
+    printf("Writing data to Flash at address 0x%06X...\r\n", FLASH_TEST_ADDR);
+    W25Q128_write(write_buff, FLASH_TEST_ADDR, FLASH_TEST_LEN);
+
+    printf("Reading data from Flash...\r\n");
+    W25Q128_read(read_buff, FLASH_TEST_ADDR, FLASH_TEST_LEN);
+
+    printf("Write data: ");
+    for(i = 0; i < FLASH_TEST_LEN; i++)
+    {
+        printf("%c", write_buff[i]);
+    }
+    printf("\r\n");
+
+    printf("Read  data: ");
+    for(i = 0; i < FLASH_TEST_LEN; i++)
+    {
+        printf("%c", read_buff[i]);
+    }
+    printf("\r\n");
+
+    for(i = 0; i < FLASH_TEST_LEN; i++)
+    {
+        if(write_buff[i] != read_buff[i])
+        {
+            test_pass = 0;
+            break;
+        }
+    }
+
+    if(test_pass == 1)
+    {
+        printf("TEST PASSED!\r\n");
+    }
+    else
+    {
+        printf("TEST FAILED! Mismatch at byte %d\r\n", i);
+        printf("Expected: 0x%02X, Got: 0x%02X\r\n", write_buff[i], read_buff[i]);
+    }
+
+    printf("=== Test Complete ===\r\n");
 }
 
 static void OLED_DisplayEncoderHeader(void)

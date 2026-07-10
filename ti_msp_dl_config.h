@@ -238,6 +238,28 @@ extern "C" {
 
 /* clang-format on */
 
+/* Defines for SPI */
+#define SPI_INST                                                           SPI1
+#define SPI_INST_IRQHandler                                     SPI1_IRQHandler
+#define SPI_INST_INT_IRQN                                         SPI1_INT_IRQN
+#define GPIO_SPI_PICO_PORT                                                GPIOB
+#define GPIO_SPI_PICO_PIN                                         DL_GPIO_PIN_8
+#define GPIO_SPI_IOMUX_PICO                                     (IOMUX_PINCM25)
+#define GPIO_SPI_IOMUX_PICO_FUNC                     IOMUX_PINCM25_PF_SPI1_PICO
+#define GPIO_SPI_POCI_PORT                                                GPIOB
+#define GPIO_SPI_POCI_PIN                                         DL_GPIO_PIN_7
+#define GPIO_SPI_IOMUX_POCI                                     (IOMUX_PINCM24)
+#define GPIO_SPI_IOMUX_POCI_FUNC                     IOMUX_PINCM24_PF_SPI1_POCI
+#define GPIO_SPI_SCLK_PORT                                                GPIOB
+#define GPIO_SPI_SCLK_PIN                                         DL_GPIO_PIN_9
+#define GPIO_SPI_IOMUX_SCLK                                     (IOMUX_PINCM26)
+#define GPIO_SPI_IOMUX_SCLK_FUNC                     IOMUX_PINCM26_PF_SPI1_SCLK
+
+/* Port definition for Pin Group CS */
+#define CS_PORT                                                          (GPIOB)
+#define CS_PIN_PIN                                               (DL_GPIO_PIN_6)
+#define CS_PIN_IOMUX                                             (IOMUX_PINCM23)
+
 void SYSCFG_DL_init(void);
 void SYSCFG_DL_initPower(void);
 void SYSCFG_DL_GPIO_init(void);
@@ -245,6 +267,7 @@ void SYSCFG_DL_SYSCTL_init(void);
 void SYSCFG_DL_PWM_0_init(void);
 void SYSCFG_DL_HEART_init(void);
 void SYSCFG_DL_UART_0_init(void);
+void SYSCFG_DL_SPI_init(void);
 
 void SYSCFG_DL_SYSTICK_init(void);
 
