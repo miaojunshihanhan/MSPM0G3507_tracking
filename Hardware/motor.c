@@ -27,7 +27,7 @@ void TB6612_Motor_Stop(void)
 ******************************************************************/
 void AO_Control(uint8_t dir, uint32_t speed)
 {
-    if(speed > 999 || dir > 1)
+    if(speed > 3199 || dir > 1)
     {
         return;
     }
@@ -55,7 +55,7 @@ void AO_Control(uint8_t dir, uint32_t speed)
 ******************************************************************/
 void BO_Control(uint8_t dir, uint32_t speed)
 {
-    if(speed > 999 || dir > 1)
+    if(speed > 3199 || dir > 1)
     {
         return;
     }

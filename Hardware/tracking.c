@@ -1,407 +1,8 @@
-/*
- * tracking.c
- *
- * 差速轮小车循迹控制模块 - 串级PID实现
- * =============================================
- * 控制架构：外环循迹PD + 内环速度PD（串级PID）
- * 传感器：8路灰度传感器（从左到右编号1~8）
- * 执行器：左右轮独立电机驱动（AO_Control / BO_Control）
- * 反馈：左右轮编码器（speedA / speedB，单位：脉冲数/控制周期）
- * =============================================
- * 调用方式：在定时中断中周期性调用 Tracking() 函数
- * 建议调用周期：5~10ms
- * =============================================
- */
-
-/*
- * 参数单位约定：
- * - speedA/speedB：编码器脉冲数/控制周期（来自 empty.c 全局变量）
- * - BASE_SPEED：目标速度，单位与编码器一致（脉冲数/控制周期）
- * - KP_OUT/KD_OUT：外环PD系数，无单位（纯数值）
- * - Turn：转向修正量，单位与编码器速度一致
- * - KP_SPEED_L/R, KD_SPEED_L/R：内环速度PD系数
- * - MOTOR_PWM_MAX：电机PWM上限（0~999，对应 AO_Control/BO_Control 的 speed 参数）
- */
-
-/*=============================================
- * 可调参数（集中在此处，方便调试）
- *=============================================*/
-
-/* ---- 基础速度设置 ---- */
-#define BASE_SPEED                  (250.0f)    /* 直行基础速度（脉冲数/周期） */
-#define TARGET_SPEED_MAX            (999.0f)    /* 目标速度绝对上限 */
-
-/* ---- 外环PD参数（循迹环） ---- */
-#define KP_OUT                      (80.0f)     /* 外环比例系数，影响循迹灵敏度 */
-#define KD_OUT                      (0.0f)      /* 外环微分系数，抑制超调和振荡 */
-#define TURN_MAX                    (300.0f)    /* 转向修正量最大限幅，防止过度转向 */
-
-/* ---- 内环PD参数（速度环，左右轮独立） ---- */
-#define KP_SPEED_L                  (1.2f)      /* 左轮速度环比例系数 */
-#define KD_SPEED_L                  (0.0f)      /* 左轮速度环微分系数 */
-#define KP_SPEED_R                  (1.2f)      /* 右轮速度环比例系数 */
-#define KD_SPEED_R                  (0.0f)      /* 右轮速度环微分系数 */
-
-/* ---- 电机控制参数 ---- */
-#define MOTOR_PWM_MAX               (999.0f)    /* 电机PWM输出上限（对应AO_Control的speed范围0~1000） */
-#define TRACKING_FORWARD_DIR        (1u)        /* 前进方向 */
-#define TRACKING_REVERSE_DIR        (0u)        /* 后退方向 */
-
-
+#include "board.h"
 #include "tracking.h"
 #include "motor.h"
-#include "key.h"
-
-extern volatile int32_t speedA;   /* 左轮编码器速度（脉冲数/控制周期） */
-extern volatile int32_t speedB;   /* 右轮编码器速度（脉冲数/控制周期） */
-
-uint8_t line_lost = 0;                   /* 丢线标志：1=所有传感器未检测到黑线 */
-uint8_t tracking_enabled = 0;            /* 循迹使能：上电默认关闭，B21按键切换 */
-Tracking_State tracking_state = {0};     /* 循迹状态结构体，用于调试和监控 */
-
-static Tracking_PDController left_speed_pid = {KP_SPEED_L, KD_SPEED_L, 0.0f, 0.0f, 0.0f};   /* 左轮速度PID控制器 */
-static Tracking_PDController right_speed_pid = {KP_SPEED_R, KD_SPEED_R, 0.0f, 0.0f, 0.0f}; /* 右轮速度PID控制器 */
-static float last_valid_tracking_error = 0.0f;       /* 上一次有效偏差值（丢线时复用） */
-static float outer_error_previous = 0.0f;            /* 外环PD的上一次误差（用于微分计算） */
-
-/*=============================================
- * 辅助函数：浮点限幅
- *=============================================*/
-/*
- * 函数名：Limit_Float
- * 功  能：将浮点数限制在指定范围内
- * 参  数：value - 输入值
- *         min_value - 最小值
- *         max_value - 最大值
- * 返回值：限幅后的浮点值
- */
-static float Limit_Float(float value, float min_value, float max_value)
-{
-    if(value > max_value)
-    {
-        return max_value;
-    }
-    if(value < min_value)
-    {
-        return min_value;
-    }
-    return value;
-}
-
-/*=============================================
- * 辅助函数：PWM值转无符号32位整数
- *=============================================*/
-/*
- * 函数名：Pwm_To_U32
- * 功  能：将浮点PWM值转换为AO_Control/BO_Control所需的uint32_t类型
- *         包含四舍五入和限幅处理
- * 参  数：pwm - 浮点PWM值
- * 返回值：0~MOTOR_PWM_MAX范围内的uint32_t值
- */
-static uint32_t Pwm_To_U32(float pwm)
-{
-    pwm = Limit_Float(pwm, 0.0f, MOTOR_PWM_MAX);
-    return (uint32_t)(pwm + 0.5f);
-}
-
-/*=============================================
- * 辅助函数：左轮电机输出
- *=============================================*/
-/*
- * 函数名：Left_Motor_Output
- * 功  能：根据浮点PWM值控制左轮电机
- *         自动处理正负值对应的前进/后退方向
- * 参  数：pwm - 浮点PWM值（正值=前进，负值=后退）
- */
-static void Left_Motor_Output(float pwm)
-{
-    uint8_t dir = TRACKING_FORWARD_DIR;
-
-    if(pwm < 0.0f)
-    {
-        pwm = -pwm;
-        dir = TRACKING_REVERSE_DIR;
-    }
-
-    AO_Control(dir, Pwm_To_U32(pwm));
-}
-
-/*=============================================
- * 辅助函数：右轮电机输出
- *=============================================*/
-/*
- * 函数名：Right_Motor_Output
- * 功  能：根据浮点PWM值控制右轮电机
- *         自动处理正负值对应的前进/后退方向
- * 参  数：pwm - 浮点PWM值（正值=前进，负值=后退）
- */
-static void Right_Motor_Output(float pwm)
-{
-    uint8_t dir = TRACKING_FORWARD_DIR;
-
-    if(pwm < 0.0f)
-    {
-        pwm = -pwm;
-        dir = TRACKING_REVERSE_DIR;
-    }
-
-    BO_Control(dir, Pwm_To_U32(pwm));
-}
-
-static void Tracking_Motor_Stop(void)
-{
-    AO_Control(TRACKING_FORWARD_DIR, 0u);
-    BO_Control(TRACKING_FORWARD_DIR, 0u);
-}
-
-/*=============================================
- * 主控制函数：Tracking
- *=============================================*/
-/*
- * 函数名：Tracking
- * 功  能：循迹主控制函数（串级PID执行入口）
- * 执行流程：
- *   1. 外环：get_error() 获取传感器加权平均偏差
- *   2. 外环：Outer_PD_Control() 计算转向修正量 Turn
- *   3. 速度分解：左/右轮目标速度 = BASE_SPEED ± Turn
- *   4. 内环：Speed_PD_Control() 对左右轮进行速度闭环控制
- *   5. 输出：Left_Motor_Output / Right_Motor_Output 驱动电机
- *   6. 更新：保存状态到 tracking_state 供调试使用
- * 调用要求：在定时中断中周期性调用（建议5~10ms）
- */
-void Tracking(void)
-{
-    float error;
-    float turn;
-    float left_target;
-    float right_target;
-    float left_pwm;
-    float right_pwm;
-
-    Key_Scan_5ms();
-    if(click())
-    {
-        tracking_enabled = (uint8_t)!tracking_enabled;
-        Tracking_Reset();
-    }
-
-    if(tracking_enabled == 0u)
-    {
-        Tracking_Motor_Stop();
-        tracking_state.left_target = 0.0f;
-        tracking_state.right_target = 0.0f;
-        tracking_state.left_pwm = 0.0f;
-        tracking_state.right_pwm = 0.0f;
-        return;
-    }
-
-    /* ---- 步骤1：外环循迹PD ---- */
-    /* 获取当前传感器偏差（单位：传感器间距） */
-    error = get_error();
-    /* 根据偏差计算转向修正量 */
-    turn = Outer_PD_Control(error);
-
-    /* ---- 步骤2：速度分解（差速转向） ---- */
-    /* 偏差error < 0：黑线在左侧，需向左转
-     *   左轮减速（BASE_SPEED + turn，turn为负）
-     *   右轮加速（BASE_SPEED - turn，turn为负）
-     * 偏差error > 0：黑线在右侧，需向右转
-     *   左轮加速（BASE_SPEED + turn，turn为正）
-     *   右轮减速（BASE_SPEED - turn，turn为正）
-     */
-    left_target = Limit_Float(BASE_SPEED + turn, -TARGET_SPEED_MAX, TARGET_SPEED_MAX);
-    right_target = Limit_Float(BASE_SPEED - turn, -TARGET_SPEED_MAX, TARGET_SPEED_MAX);
-
-    /* ---- 步骤3：内环速度PD（左右轮独立闭环） ---- */
-    /* 根据目标速度和实际编码器速度，计算电机PWM输出 */
-    left_pwm = Speed_PD_Control(&left_speed_pid, left_target, (float)speedA);
-    right_pwm = Speed_PD_Control(&right_speed_pid, right_target, (float)speedB);
-
-    /* ---- 步骤4：电机输出 ---- */
-    Left_Motor_Output(left_pwm);
-    Right_Motor_Output(right_pwm);
-
-    /* ---- 步骤5：保存状态（供调试监控） ---- */
-    tracking_state.error = error;
-    tracking_state.turn = turn;
-    tracking_state.left_target = left_target;
-    tracking_state.right_target = right_target;
-    tracking_state.left_pwm = left_pwm;
-    tracking_state.right_pwm = right_pwm;
-}
-
-/*=============================================
- * 传感器处理：get_error
- *=============================================*/
-/*
- * 函数名：get_error
- * 功  能：加权平均法计算传感器偏差
- * 算法原理：
- *   1. 调用 Tracking_ReadSensors() 获取8路传感器状态
- *   2. 传感器返回值：bit=1表示白线，bit=0表示黑线
- *   3. 对检测到黑线（~sensors & 1）的传感器进行加权平均：
- *      position = Σ(i * weight) / Σ(weight)，其中i为传感器编号(0~7)，weight=1
- *   4. 连续偏差：error = position - 3.5（传感器0~7的理论中心）
- * 丢线处理：
- *   当所有传感器均未检测到黑线（black_mask == 0）时，
- *   返回上一次有效的error值，并设置 line_lost = 1
- * 返回值：偏差 error（单位：传感器间距）
- *         范围：理论上 -3.5 ~ +3.5（传感器全部偏左到全部偏右）
- */
-float get_error(void)
-{
-    uint8_t sensors;
-    uint8_t black_mask;
-    uint8_t i;
-    float weighted_sum = 0.0f;
-    float detected_count = 0.0f;
-    float position;
-    float error;
-
-    /* 读取8路传感器原始值 */
-    sensors = Tracking_ReadSensors();
-    tracking_state.sensors = sensors;
-
-    /* Tracking_ReadSensors返回1为白线、0为黑线，取反得到黑线掩码 */
-    black_mask = (uint8_t)(~sensors) & 0xFFu;
-
-    /* 丢线处理：所有传感器均为白线 */
-    if(black_mask == 0u)
-    {
-        line_lost = 1u;
-        return last_valid_tracking_error;
-    }
-
-    line_lost = 0u;
-
-    /* 遍历8路传感器，对检测到黑线的传感器进行加权求和 */
-    for(i = 0u; i < 8u; i++)
-    {
-        if(((black_mask >> i) & 0x01u) != 0u)
-        {
-            weighted_sum += (float)i;
-            detected_count += 1.0f;
-        }
-    }
-
-    /* 计算黑线中心位置 */
-    position = weighted_sum / detected_count;
-    /* 计算偏差（相对于理论中心3.5） */
-    error = position - 3.5f;
-    /* 保存有效偏差（供丢线时使用） */
-    last_valid_tracking_error = error;
-
-    return error;
-}
-
-/*=============================================
- * 外环PD控制器：Outer_PD_Control
- *=============================================*/
-/*
- * 函数名：Outer_PD_Control
- * 功  能：外环位置式PD控制器，根据传感器偏差计算转向修正量
- * 控制律：
- *   Turn = KP_OUT * error + KD_OUT * (error - error_prev)
- * 参数说明：
- *   error - 当前偏差（来自get_error，单位：传感器间距）
- * 返回值：
- *   Turn - 转向修正量（单位与编码器速度一致，脉冲数/周期）
- * 限幅：
- *   Turn 被限制在 [-TURN_MAX, TURN_MAX] 范围内
- */
-float Outer_PD_Control(float error)
-{
-    float turn;
-
-    /* 位置式PD控制律：比例项 + 微分项 */
-    turn = (KP_OUT * error) + (KD_OUT * (error - outer_error_previous));
-    /* 更新上一次误差（供下次微分计算） */
-    outer_error_previous = error;
-
-    /* 转向修正量限幅，防止过度转向 */
-    return Limit_Float(turn, -TURN_MAX, TURN_MAX);
-}
-
-/*=============================================
- * 内环PD控制器：Speed_PD_Control
- *=============================================*/
-/*
- * 函数名：Speed_PD_Control
- * 功  能：内环位置式PD控制器，单轮速度闭环控制
- * 控制律：
- *   output = target_speed + KP * error + KD * (error - last_error)
- *   其中 error = target_speed - actual_speed
- * 参数说明：
- *   pid - PID控制器状态结构体指针
- *   target_speed - 目标速度（脉冲数/周期）
- *   actual_speed - 实际速度（编码器反馈，脉冲数/周期）
- * 返回值：
- *   电机PWM输出值（已限幅在 [-MOTOR_PWM_MAX, MOTOR_PWM_MAX]）
- * 设计说明：
- *   加入 target_speed 作为前馈项，使稳态时输出能直接维持目标速度，
- *   PD部分仅用于纠正误差，有效消除静差并提高响应速度。
- */
-float Speed_PD_Control(Tracking_PDController *pid, float target_speed, float actual_speed)
-{
-    if(pid == 0)
-    {
-        return 0.0f;
-    }
-
-    /* 计算速度误差：目标速度 - 实际速度 */
-    pid->error = target_speed - actual_speed;
-
-    /*
-     * 位置式PD + 前馈控制：
-     * output = target_speed（前馈） + KP*error（比例） + KD*(error - last_error)（微分）
-     * 前馈项确保稳态时输出能直接维持目标速度，消除静差
-     */
-    pid->output = target_speed +
-                  (pid->kp * pid->error) +
-                  (pid->kd * (pid->error - pid->last_error));
-
-    /* 更新上一次误差（供下次微分计算） */
-    pid->last_error = pid->error;
-
-    /* PWM输出限幅 */
-    return Limit_Float(pid->output, -MOTOR_PWM_MAX, MOTOR_PWM_MAX);
-}
-
-/*=============================================
- * 初始化/重置函数：Tracking_Reset
- *=============================================*/
-/*
- * 函数名：Tracking_Reset
- * 功  能：重置所有循迹控制状态变量
- * 调用时机：系统上电初始化、手动复位、停车后重新启动
- */
-void Tracking_Reset(void)
-{
-    /* 全局变量重置 */
-    line_lost = 0u;
-    tracking_state.sensors = 0u;
-    tracking_state.error = 0.0f;
-    tracking_state.turn = 0.0f;
-    tracking_state.left_target = 0.0f;
-    tracking_state.right_target = 0.0f;
-    tracking_state.left_pwm = 0.0f;
-    tracking_state.right_pwm = 0.0f;
-
-    /* 左轮速度PID状态重置 */
-    left_speed_pid.error = 0.0f;
-    left_speed_pid.last_error = 0.0f;
-    left_speed_pid.output = 0.0f;
-
-    /* 右轮速度PID状态重置 */
-    right_speed_pid.error = 0.0f;
-    right_speed_pid.last_error = 0.0f;
-    right_speed_pid.output = 0.0f;
-
-    /* 外环状态重置 */
-    last_valid_tracking_error = 0.0f;
-    outer_error_previous = 0.0f;
-}
-
+#include "w25q128.h"
+#include <stdio.h>
 /*=============================================
  * 传感器读取函数：Tracking_ReadSensors
  *=============================================*/
@@ -438,4 +39,965 @@ uint8_t Tracking_ReadSensors(void)
 	if(pinsB & GraytB_S8_PIN)  sensors |= 0x80;
 
 	return sensors;
+}
+
+#define SPEED_LOOP_PERIOD_MS          (10u)
+#define VOFA_DEFAULT_PERIOD_MS        (100u)
+#define UART_LINE_MAX                 (64u)
+#define CMD_QUIET_MS                  (300u)
+
+#define SPEED_COUNT_MAX               (999)
+#define PWM_MAX                       (3199)
+#define PWM_MIN_DEFAULT               (500)
+#define PWM_SLEW_DEFAULT              (900)
+#define KP_DEFAULT_X1000              (20000)
+#define KI_DEFAULT_X1000              (2000)
+#define KD_DEFAULT_X1000              (0)
+#define FF_DEFAULT_X1000              (50000)
+#define KP_MAX_X1000                  (100000)
+#define KI_MAX_X1000                  (50000)
+#define KD_MAX_X1000                  (50000)
+#define FF_MAX_X1000                  (50000)
+#define INTEGRAL_LIMIT_X1000          (1200000)
+#define PID_FLASH_ADDR                (0x010000u)
+#define PID_FLASH_MAGIC               (0x53504C32u)
+
+#define MOTOR_FORWARD_DIR             (1u)
+#define MOTOR_REVERSE_DIR             (0u)
+#define LEFT_ENCODER_DIR              (1)
+#define RIGHT_ENCODER_DIR             (1)
+
+typedef struct
+{
+	int32_t target;
+	int32_t actual;
+	int32_t last_count;
+	int32_t error;
+	int32_t last_error;
+	int32_t integral_x1000;
+	int32_t pwm;
+	int32_t kp_x1000;
+	int32_t ki_x1000;
+	int32_t kd_x1000;
+	int32_t ff_x1000;
+} SpeedWheel;
+
+typedef struct
+{
+	uint32_t magic;
+	int32_t left_kp_x1000;
+	int32_t right_kp_x1000;
+	int32_t left_ki_x1000;
+	int32_t right_ki_x1000;
+	int32_t left_kd_x1000;
+	int32_t right_kd_x1000;
+	int32_t left_ff_x1000;
+	int32_t right_ff_x1000;
+	int32_t min_pwm;
+	int32_t pwm_slew;
+	uint32_t checksum;
+} SpeedPidConfig;
+
+static SpeedWheel left_wheel = {0, 0, 0, 0, 0, 0, 0, KP_DEFAULT_X1000, KI_DEFAULT_X1000, KD_DEFAULT_X1000, FF_DEFAULT_X1000};
+static SpeedWheel right_wheel = {0, 0, 0, 0, 0, 0, 0, KP_DEFAULT_X1000, KI_DEFAULT_X1000, KD_DEFAULT_X1000, FF_DEFAULT_X1000};
+
+static volatile uint8_t speed_loop_pending = 0u;
+static volatile uint8_t uart_line_ready = 0u;
+static volatile uint8_t uart_line_index = 0u;
+static volatile uint8_t uart_idle_ms = 0u;
+static volatile char uart_line_buf[UART_LINE_MAX];
+
+static uint8_t vofa_enabled = 1u;
+static uint16_t vofa_period_ms = VOFA_DEFAULT_PERIOD_MS;
+static uint16_t cmd_quiet_ms = 0u;
+static int32_t min_pwm = PWM_MIN_DEFAULT;
+static int32_t pwm_slew = PWM_SLEW_DEFAULT;
+
+static int32_t LimitInt32(int32_t value, int32_t min_value, int32_t max_value)
+{
+	if(value > max_value)
+	{
+		return max_value;
+	}
+	if(value < min_value)
+	{
+		return min_value;
+	}
+	return value;
+}
+
+static int32_t LimitStepInt32(int32_t current, int32_t target, int32_t max_step)
+{
+	int32_t delta = target - current;
+
+	if(max_step <= 0)
+	{
+		return target;
+	}
+	if(delta > max_step)
+	{
+		return current + max_step;
+	}
+	if(delta < -max_step)
+	{
+		return current - max_step;
+	}
+	return target;
+}
+
+static uint32_t AbsInt32ToU32(int32_t value)
+{
+	if(value < 0)
+	{
+		return (uint32_t)(-value);
+	}
+	return (uint32_t)value;
+}
+
+static int32_t SignInt32(int32_t value)
+{
+	if(value > 0)
+	{
+		return 1;
+	}
+	if(value < 0)
+	{
+		return -1;
+	}
+	return 0;
+}
+
+static int32_t EncoderDeltaToSpeed(int32_t current_count, int32_t *last_count, int32_t encoder_dir)
+{
+	int32_t delta = current_count - *last_count;
+
+	*last_count = current_count;
+	return delta * encoder_dir;
+}
+
+static char ToUpperChar(char ch)
+{
+	if((ch >= 'a') && (ch <= 'z'))
+	{
+		return (char)(ch - ('a' - 'A'));
+	}
+	return ch;
+}
+
+static uint8_t IsCommandSeparator(char ch)
+{
+	return ((ch == '\0') || ((uint8_t)ch <= ' ') ||
+	        (ch == '=') || (ch == ':') || (ch == ','));
+}
+
+static const char *FindCommandStart(const char *text)
+{
+	while((*text != '\0') &&
+	      !(((*text >= 'A') && (*text <= 'Z')) ||
+	        ((*text >= 'a') && (*text <= 'z')) ||
+	        (*text == '?')))
+	{
+		text++;
+	}
+	return text;
+}
+
+static const char *SkipSeparators(const char *text)
+{
+	while((*text != '\0') &&
+	      (((uint8_t)*text <= ' ') || (*text == '=') ||
+	       (*text == ':') || (*text == ',')))
+	{
+		text++;
+	}
+	return text;
+}
+
+static uint8_t ParseInt32(const char **text, int32_t *value)
+{
+	int32_t sign = 1;
+	int32_t result = 0;
+	uint8_t has_digit = 0u;
+	const char *p = SkipSeparators(*text);
+
+	if(*p == '-')
+	{
+		sign = -1;
+		p++;
+	}
+	else if(*p == '+')
+	{
+		p++;
+	}
+
+	while((*p >= '0') && (*p <= '9'))
+	{
+		has_digit = 1u;
+		result = (result * 10) + (int32_t)(*p - '0');
+		p++;
+	}
+
+	if(has_digit == 0u)
+	{
+		return 0u;
+	}
+
+	*value = result * sign;
+	*text = p;
+	return 1u;
+}
+
+static uint8_t ParseKpX1000(const char **text, int32_t *value)
+{
+	int32_t integer = 0;
+	int32_t fraction = 0;
+	int32_t scale = 100;
+	uint8_t has_digit = 0u;
+	const char *p = SkipSeparators(*text);
+
+	while((*p >= '0') && (*p <= '9'))
+	{
+		has_digit = 1u;
+		integer = (integer * 10) + (int32_t)(*p - '0');
+		p++;
+	}
+
+	if(*p == '.')
+	{
+		p++;
+		while(((*p >= '0') && (*p <= '9')) && (scale > 0))
+		{
+			has_digit = 1u;
+			fraction += (int32_t)(*p - '0') * scale;
+			scale /= 10;
+			p++;
+		}
+		while((*p >= '0') && (*p <= '9'))
+		{
+			p++;
+		}
+	}
+
+	if(has_digit == 0u)
+	{
+		return 0u;
+	}
+
+	*value = (integer * 1000) + fraction;
+	*text = p;
+	return 1u;
+}
+
+static uint32_t ConfigChecksum(const SpeedPidConfig *config)
+{
+	return config->magic ^
+	       (uint32_t)config->left_kp_x1000 ^
+	       ((uint32_t)config->right_kp_x1000 << 1) ^
+	       ((uint32_t)config->left_ki_x1000 << 2) ^
+	       ((uint32_t)config->right_ki_x1000 << 3) ^
+	       ((uint32_t)config->left_kd_x1000 << 4) ^
+	       ((uint32_t)config->right_kd_x1000 << 5) ^
+	       ((uint32_t)config->left_ff_x1000 << 6) ^
+	       ((uint32_t)config->right_ff_x1000 << 7) ^
+	       ((uint32_t)config->min_pwm << 8) ^
+	       ((uint32_t)config->pwm_slew << 9) ^
+	       0xA55A5AA5u;
+}
+
+static void SavePidConfig(void)
+{
+	SpeedPidConfig config;
+
+	config.magic = PID_FLASH_MAGIC;
+	config.left_kp_x1000 = left_wheel.kp_x1000;
+	config.right_kp_x1000 = right_wheel.kp_x1000;
+	config.left_ki_x1000 = left_wheel.ki_x1000;
+	config.right_ki_x1000 = right_wheel.ki_x1000;
+	config.left_kd_x1000 = left_wheel.kd_x1000;
+	config.right_kd_x1000 = right_wheel.kd_x1000;
+	config.left_ff_x1000 = left_wheel.ff_x1000;
+	config.right_ff_x1000 = right_wheel.ff_x1000;
+	config.min_pwm = min_pwm;
+	config.pwm_slew = pwm_slew;
+	config.checksum = ConfigChecksum(&config);
+	W25Q128_write((uint8_t *)&config, PID_FLASH_ADDR, (uint16_t)sizeof(config));
+}
+
+static void LoadPidConfig(void)
+{
+	SpeedPidConfig config;
+
+	W25Q128_read((uint8_t *)&config, PID_FLASH_ADDR, (uint16_t)sizeof(config));
+	if((config.magic == PID_FLASH_MAGIC) &&
+	   (config.checksum == ConfigChecksum(&config)))
+	{
+		left_wheel.kp_x1000 = LimitInt32(config.left_kp_x1000, 0, KP_MAX_X1000);
+		right_wheel.kp_x1000 = LimitInt32(config.right_kp_x1000, 0, KP_MAX_X1000);
+		left_wheel.ki_x1000 = LimitInt32(config.left_ki_x1000, 0, KI_MAX_X1000);
+		right_wheel.ki_x1000 = LimitInt32(config.right_ki_x1000, 0, KI_MAX_X1000);
+		left_wheel.kd_x1000 = LimitInt32(config.left_kd_x1000, 0, KD_MAX_X1000);
+		right_wheel.kd_x1000 = LimitInt32(config.right_kd_x1000, 0, KD_MAX_X1000);
+		left_wheel.ff_x1000 = LimitInt32(config.left_ff_x1000, 0, FF_MAX_X1000);
+		right_wheel.ff_x1000 = LimitInt32(config.right_ff_x1000, 0, FF_MAX_X1000);
+		min_pwm = LimitInt32(config.min_pwm, 0, PWM_MAX);
+		pwm_slew = LimitInt32(config.pwm_slew, 0, PWM_MAX);
+	}
+}
+
+static void MotorOutput(int32_t left_pwm, int32_t right_pwm)
+{
+	uint8_t left_dir = MOTOR_FORWARD_DIR;
+	uint8_t right_dir = MOTOR_FORWARD_DIR;
+
+	left_pwm = LimitInt32(left_pwm, -PWM_MAX, PWM_MAX);
+	right_pwm = LimitInt32(right_pwm, -PWM_MAX, PWM_MAX);
+
+	if(left_pwm < 0)
+	{
+		left_dir = MOTOR_REVERSE_DIR;
+	}
+	if(right_pwm < 0)
+	{
+		right_dir = MOTOR_REVERSE_DIR;
+	}
+
+	AO_Control(left_dir, AbsInt32ToU32(left_pwm));
+	BO_Control(right_dir, AbsInt32ToU32(right_pwm));
+}
+
+static void ResetWheelState(SpeedWheel *wheel)
+{
+	wheel->error = 0;
+	wheel->last_error = 0;
+	wheel->integral_x1000 = 0;
+	wheel->pwm = 0;
+}
+
+static int32_t CalculateWheelPwm(SpeedWheel *wheel)
+{
+	int32_t target_sign;
+	int32_t base_pwm;
+	int32_t pid_pwm;
+	int32_t command_pwm;
+	int32_t error_delta;
+	int32_t integral_limit;
+
+	wheel->error = wheel->target - wheel->actual;
+
+	target_sign = SignInt32(wheel->target);
+	if(target_sign == 0)
+	{
+		wheel->pwm = LimitStepInt32(wheel->pwm, 0, pwm_slew);
+		if(wheel->pwm == 0)
+		{
+			wheel->last_error = 0;
+			wheel->integral_x1000 = 0;
+		}
+		return wheel->pwm;
+	}
+
+	error_delta = wheel->error - wheel->last_error;
+	wheel->last_error = wheel->error;
+
+	integral_limit = INTEGRAL_LIMIT_X1000;
+	if((min_pwm > 0) && (integral_limit > ((PWM_MAX - min_pwm) * 1000)))
+	{
+		integral_limit = (PWM_MAX - min_pwm) * 1000;
+	}
+
+	wheel->integral_x1000 += wheel->ki_x1000 * wheel->error;
+	wheel->integral_x1000 = LimitInt32(wheel->integral_x1000,
+	                                  -integral_limit,
+	                                  integral_limit);
+
+	base_pwm = (wheel->ff_x1000 * (int32_t)AbsInt32ToU32(wheel->target)) / 1000;
+	if(min_pwm > 0)
+	{
+		base_pwm += min_pwm;
+	}
+	base_pwm *= target_sign;
+
+	pid_pwm = ((wheel->kp_x1000 * wheel->error) +
+	           wheel->integral_x1000 +
+	           (wheel->kd_x1000 * error_delta)) / 1000;
+	command_pwm = base_pwm + pid_pwm;
+
+	if(target_sign > 0)
+	{
+		command_pwm = LimitInt32(command_pwm, 0, PWM_MAX);
+		if(command_pwm == PWM_MAX)
+		{
+			wheel->integral_x1000 -= wheel->ki_x1000 * wheel->error;
+		}
+	}
+	else
+	{
+		command_pwm = LimitInt32(command_pwm, -PWM_MAX, 0);
+		if(command_pwm == -PWM_MAX)
+		{
+			wheel->integral_x1000 -= wheel->ki_x1000 * wheel->error;
+		}
+	}
+
+	wheel->pwm = LimitStepInt32(wheel->pwm, command_pwm, pwm_slew);
+	return wheel->pwm;
+}
+
+static void SetWheelKp(SpeedWheel *wheel, int32_t value)
+{
+	wheel->kp_x1000 = LimitInt32(value, 0, KP_MAX_X1000);
+	wheel->integral_x1000 = 0;
+}
+
+static void SetWheelKi(SpeedWheel *wheel, int32_t value)
+{
+	wheel->ki_x1000 = LimitInt32(value, 0, KI_MAX_X1000);
+	wheel->integral_x1000 = 0;
+}
+
+static void SetWheelKd(SpeedWheel *wheel, int32_t value)
+{
+	wheel->kd_x1000 = LimitInt32(value, 0, KD_MAX_X1000);
+}
+
+static void SetWheelFf(SpeedWheel *wheel, int32_t value)
+{
+	wheel->ff_x1000 = LimitInt32(value, 0, FF_MAX_X1000);
+}
+
+static void PrintFixed3(const char *name, int32_t value)
+{
+	printf("%s=%ld.%03ld",
+	       name,
+	       (long)(value / 1000),
+	       (long)AbsInt32ToU32(value % 1000));
+}
+
+static void PrintParamSaved(const char *name, int32_t value)
+{
+	SavePidConfig();
+	printf("OK ");
+	PrintFixed3(name, value);
+	printf(" SAVED\r\n");
+}
+
+static void SetBothSpeedTarget(int32_t left_target, int32_t right_target)
+{
+	left_wheel.target = LimitInt32(left_target, -SPEED_COUNT_MAX, SPEED_COUNT_MAX);
+	right_wheel.target = LimitInt32(right_target, -SPEED_COUNT_MAX, SPEED_COUNT_MAX);
+	left_wheel.integral_x1000 = 0;
+	right_wheel.integral_x1000 = 0;
+	left_wheel.last_error = 0;
+	right_wheel.last_error = 0;
+}
+
+static void SetSingleSpeedTarget(SpeedWheel *active_wheel, SpeedWheel *idle_wheel, int32_t target)
+{
+	active_wheel->target = LimitInt32(target, -SPEED_COUNT_MAX, SPEED_COUNT_MAX);
+	idle_wheel->target = 0;
+	active_wheel->integral_x1000 = 0;
+	idle_wheel->integral_x1000 = 0;
+	active_wheel->last_error = 0;
+	idle_wheel->last_error = 0;
+}
+
+static void SpeedLoop10ms(void)
+{
+	static uint16_t vofa_tick_ms = 0u;
+	int32_t encoder_a;
+	int32_t encoder_b;
+
+	__disable_irq();
+	encoder_a = Get_Encoder_countA;
+	encoder_b = Get_Encoder_countB;
+	__enable_irq();
+
+	left_wheel.actual = EncoderDeltaToSpeed(encoder_b, &left_wheel.last_count, LEFT_ENCODER_DIR);
+	right_wheel.actual = EncoderDeltaToSpeed(encoder_a, &right_wheel.last_count, RIGHT_ENCODER_DIR);
+
+	CalculateWheelPwm(&left_wheel);
+	CalculateWheelPwm(&right_wheel);
+	MotorOutput(left_wheel.pwm, right_wheel.pwm);
+
+	if(cmd_quiet_ms >= SPEED_LOOP_PERIOD_MS)
+	{
+		cmd_quiet_ms -= SPEED_LOOP_PERIOD_MS;
+	}
+	else
+	{
+		cmd_quiet_ms = 0u;
+	}
+
+	vofa_tick_ms += SPEED_LOOP_PERIOD_MS;
+	if((vofa_enabled != 0u) &&
+	   (cmd_quiet_ms == 0u) &&
+	   (vofa_tick_ms >= vofa_period_ms))
+	{
+		vofa_tick_ms = 0u;
+		printf("%ld,%ld,%ld,%ld,%ld,%ld\r\n",
+		       (long)left_wheel.target,
+		       (long)right_wheel.target,
+		       (long)left_wheel.actual,
+		       (long)right_wheel.actual,
+		       (long)left_wheel.pwm,
+		       (long)right_wheel.pwm);
+	}
+}
+
+static void StopSpeedLoop(void)
+{
+	left_wheel.target = 0;
+	right_wheel.target = 0;
+	ResetWheelState(&left_wheel);
+	ResetWheelState(&right_wheel);
+	MotorOutput(0, 0);
+}
+
+static void PrintStatus(void)
+{
+	printf("LT_CNT10=%ld,RT_CNT10=%ld,LA_CNT10=%ld,RA_CNT10=%ld,LPWM=%ld,RPWM=%ld,",
+	       (long)left_wheel.target,
+	       (long)right_wheel.target,
+	       (long)left_wheel.actual,
+	       (long)right_wheel.actual,
+	       (long)left_wheel.pwm,
+	       (long)right_wheel.pwm);
+	PrintFixed3("KPL", left_wheel.kp_x1000);
+	printf(",");
+	PrintFixed3("KPR", right_wheel.kp_x1000);
+	printf(",");
+	PrintFixed3("KIL", left_wheel.ki_x1000);
+	printf(",");
+	PrintFixed3("KIR", right_wheel.ki_x1000);
+	printf(",");
+	PrintFixed3("KDL", left_wheel.kd_x1000);
+	printf(",");
+	PrintFixed3("KDR", right_wheel.kd_x1000);
+	printf(",");
+	PrintFixed3("FFL", left_wheel.ff_x1000);
+	printf(",");
+	PrintFixed3("FFR", right_wheel.ff_x1000);
+	printf(",MINPWM=%ld,SLEW=%ld\r\n", (long)min_pwm, (long)pwm_slew);
+}
+
+static void ProcessCommand(const char *line)
+{
+	const char *p = FindCommandStart(line);
+	char c0 = ToUpperChar(p[0]);
+	char c1 = ToUpperChar(p[1]);
+	char c2 = ToUpperChar(p[2]);
+	int32_t first;
+	int32_t second;
+
+	if(c0 == '\0')
+	{
+		return;
+	}
+
+	if(((c0 == 'O') && (c1 == 'K') && IsCommandSeparator(p[2])) ||
+	   ((c0 == 'E') && (c1 == 'R') && (c2 == 'R')) ||
+	   ((c0 == 'L') && (c1 == 'T') && (c2 == '_')))
+	{
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'P') && (c2 == 'L'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKp(&left_wheel, first);
+			PrintParamSaved("KPL", left_wheel.kp_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'P') && (c2 == 'R'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKp(&right_wheel, first);
+			PrintParamSaved("KPR", right_wheel.kp_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'P') && IsCommandSeparator(p[2]))
+	{
+		p += 2;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKp(&left_wheel, first);
+			SetWheelKp(&right_wheel, first);
+			PrintParamSaved("KP", left_wheel.kp_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'I') && (c2 == 'L'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKi(&left_wheel, first);
+			PrintParamSaved("KIL", left_wheel.ki_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'I') && (c2 == 'R'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKi(&right_wheel, first);
+			PrintParamSaved("KIR", right_wheel.ki_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'I') && IsCommandSeparator(p[2]))
+	{
+		p += 2;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKi(&left_wheel, first);
+			SetWheelKi(&right_wheel, first);
+			PrintParamSaved("KI", left_wheel.ki_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'D') && (c2 == 'L'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKd(&left_wheel, first);
+			PrintParamSaved("KDL", left_wheel.kd_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'D') && (c2 == 'R'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKd(&right_wheel, first);
+			PrintParamSaved("KDR", right_wheel.kd_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'K') && (c1 == 'D') && IsCommandSeparator(p[2]))
+	{
+		p += 2;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelKd(&left_wheel, first);
+			SetWheelKd(&right_wheel, first);
+			PrintParamSaved("KD", left_wheel.kd_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'F') && (c1 == 'F') && (c2 == 'L'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelFf(&left_wheel, first);
+			PrintParamSaved("FFL", left_wheel.ff_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'F') && (c1 == 'F') && (c2 == 'R'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelFf(&right_wheel, first);
+			PrintParamSaved("FFR", right_wheel.ff_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'F') && (c1 == 'F') && IsCommandSeparator(p[2]))
+	{
+		p += 2;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetWheelFf(&left_wheel, first);
+			SetWheelFf(&right_wheel, first);
+			PrintParamSaved("FF", left_wheel.ff_x1000);
+		}
+		return;
+	}
+
+	if((c0 == 'M') && (c1 == 'I') && (c2 == 'N'))
+	{
+		if((ToUpperChar(p[3]) == 'P') &&
+		   (ToUpperChar(p[4]) == 'W') &&
+		   (ToUpperChar(p[5]) == 'M'))
+		{
+			p += 6;
+		}
+		else
+		{
+			p += 3;
+		}
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			min_pwm = LimitInt32(first, 0, PWM_MAX);
+			SavePidConfig();
+			printf("OK MINPWM %ld SAVED\r\n", (long)min_pwm);
+		}
+		return;
+	}
+
+	if((c0 == 'S') && (c1 == 'L') && (c2 == 'E'))
+	{
+		p += 4;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			pwm_slew = LimitInt32(first, 0, PWM_MAX);
+			SavePidConfig();
+			printf("OK SLEW %ld SAVED\r\n", (long)pwm_slew);
+		}
+		return;
+	}
+
+	if((c0 == 'V') && (c1 == 'O') && (c2 == 'F'))
+	{
+		p += 4;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			vofa_enabled = (first != 0) ? 1u : 0u;
+			printf("OK VOFA %u\r\n", (unsigned int)vofa_enabled);
+		}
+		return;
+	}
+
+	if((c0 == 'R') && (c1 == 'A') && (c2 == 'T'))
+	{
+		p += 4;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			vofa_period_ms = (uint16_t)LimitInt32(first, SPEED_LOOP_PERIOD_MS, 10000);
+			printf("OK RATE %u ms\r\n", (unsigned int)vofa_period_ms);
+		}
+		return;
+	}
+
+	if((c0 == 'S') && (c1 == 'T') && (c2 == 'O'))
+	{
+		cmd_quiet_ms = CMD_QUIET_MS;
+		StopSpeedLoop();
+		printf("OK STOP\r\n");
+		return;
+	}
+
+	if((c0 == 'S') && (c1 == 'T') && (c2 == 'A'))
+	{
+		cmd_quiet_ms = CMD_QUIET_MS;
+		PrintStatus();
+		return;
+	}
+
+	if((c0 == 'S') && IsCommandSeparator(p[1]))
+	{
+		p++;
+		if((ParseInt32(&p, &first) != 0u) && (ParseInt32(&p, &second) != 0u))
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetBothSpeedTarget(first, second);
+			printf("OK SPEED %ld,%ld\r\n", (long)left_wheel.target, (long)right_wheel.target);
+		}
+		return;
+	}
+
+	if((c0 == 'L') && IsCommandSeparator(p[1]))
+	{
+		p++;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetSingleSpeedTarget(&left_wheel, &right_wheel, first);
+			printf("OK L %ld, R 0\r\n", (long)left_wheel.target);
+		}
+		return;
+	}
+
+	if((c0 == 'R') && IsCommandSeparator(p[1]))
+	{
+		p++;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			SetSingleSpeedTarget(&right_wheel, &left_wheel, first);
+			printf("OK L 0, R %ld\r\n", (long)right_wheel.target);
+		}
+		return;
+	}
+
+	if((c0 == 'H') || (c0 == '?'))
+	{
+		cmd_quiet_ms = CMD_QUIET_MS;
+		printf("CMD: S lcnt10 rcnt10 | L cnt10 | R cnt10 | KP/KI/KD/FF n | KPL/KPR/KIL/KIR/KDL/KDR/FFL/FFR n | MINPWM n | SLEW n | VOFA 0/1 | RATE ms | STOP | STAT\r\n");
+		return;
+	}
+
+	return;
+}
+
+static void ProcessUartLine(void)
+{
+	char line[UART_LINE_MAX];
+	uint8_t i;
+
+	if(uart_line_ready == 0u)
+	{
+		return;
+	}
+
+	__disable_irq();
+	for(i = 0u; i < UART_LINE_MAX; i++)
+	{
+		line[i] = uart_line_buf[i];
+		if(line[i] == '\0')
+		{
+			break;
+		}
+	}
+	line[UART_LINE_MAX - 1u] = '\0';
+	uart_line_ready = 0u;
+	__enable_irq();
+
+	ProcessCommand(line);
+}
+
+void Tracking_Init(void)
+{
+	int32_t encoder_a;
+	int32_t encoder_b;
+
+	__disable_irq();
+	encoder_a = Get_Encoder_countA;
+	encoder_b = Get_Encoder_countB;
+	__enable_irq();
+
+	left_wheel.last_count = encoder_b;
+	right_wheel.last_count = encoder_a;
+	LoadPidConfig();
+	StopSpeedLoop();
+	printf("Speed loop ready. speed unit=encoder count/10ms. S 20 20 | KP 4 | MINPWM 500 | RATE 100\r\n");
+	PrintStatus();
+}
+
+void Tracking_Timer1ms_ISR(void)
+{
+	static uint8_t tick = 0u;
+
+	tick++;
+	if(tick >= SPEED_LOOP_PERIOD_MS)
+	{
+		tick = 0u;
+		if(speed_loop_pending < 10u)
+		{
+			speed_loop_pending++;
+		}
+	}
+
+	if(uart_idle_ms > 0u)
+	{
+		uart_idle_ms--;
+		if((uart_idle_ms == 0u) &&
+		   (uart_line_index > 0u) &&
+		   (uart_line_ready == 0u))
+		{
+			uart_line_buf[uart_line_index] = '\0';
+			uart_line_ready = 1u;
+			uart_line_index = 0u;
+		}
+	}
+}
+
+void Tracking_Task(void)
+{
+	ProcessUartLine();
+
+	while(speed_loop_pending > 0u)
+	{
+		__disable_irq();
+		if(speed_loop_pending > 0u)
+		{
+			speed_loop_pending--;
+		}
+		__enable_irq();
+		SpeedLoop10ms();
+	}
+}
+
+void Tracking_UartRxByte(uint8_t data)
+{
+	if((data == '\r') || (data == '\n'))
+	{
+		if((uart_line_index > 0u) && (uart_line_ready == 0u))
+		{
+			uart_line_buf[uart_line_index] = '\0';
+			uart_line_ready = 1u;
+		}
+		uart_line_index = 0u;
+		uart_idle_ms = 0u;
+		return;
+	}
+
+	if((data == '\b') || (data == 0x7Fu))
+	{
+		if(uart_line_index > 0u)
+		{
+			uart_line_index--;
+		}
+		return;
+	}
+
+	if((data < ' ') || (data > '~'))
+	{
+		return;
+	}
+
+	if(uart_line_ready != 0u)
+	{
+		return;
+	}
+
+	if(uart_line_index < (UART_LINE_MAX - 1u))
+	{
+		uart_line_buf[uart_line_index] = (char)data;
+		uart_line_index++;
+		uart_idle_ms = 30u;
+	}
+	else
+	{
+		uart_line_index = 0u;
+	}
 }

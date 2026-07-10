@@ -1,0 +1,7 @@
+Load "D:\\Keil5\\Project\\MSPM0G3507_tracking\\keil\\Objects\\empty_LP_MSPM0G3507_nortos_keil.axf" 
+Info: Debug/System power-up request sent 
+Info: executing SWD power up 
+Info: Current state of access point is: 80027 
+Info: Current state of access point is: 79002f 
+Erase Done.Programming Done.Verify OK.Application running ...
+Flash Load finished at 21:34:40

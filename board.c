@@ -1,5 +1,6 @@
 #include "board.h"
 #include "stdio.h"
+#include "tracking.h"
 
 #define RE_0_BUFF_LEN_MAX	128
 
@@ -18,6 +19,8 @@ void board_init(void)
 	//HEART心跳中断
 	NVIC_ClearPendingIRQ(TIMA0_INT_IRQn);
 	NVIC_EnableIRQ(TIMA0_INT_IRQn);
+	NVIC_ClearPendingIRQ(GPIOA_INT_IRQn);
+	NVIC_EnableIRQ(GPIOA_INT_IRQn);
 	NVIC_ClearPendingIRQ(GPIOB_INT_IRQn);
 	NVIC_EnableIRQ(GPIOB_INT_IRQn);
 	
@@ -127,19 +130,19 @@ void UART_0_INST_IRQHandler(void)
 		case DL_UART_IIDX_RX://如果是接收中断
 			
 			// 接收发送过来的数据保存
-			receivedData = DL_UART_Main_receiveData(UART_0_INST);
+			while(DL_UART_Main_receiveDataCheck(UART_0_INST, &receivedData) == true)
+			{
+				Tracking_UartRxByte(receivedData);
 
 			// 检查缓冲区是否已满
-			if (recv0_length < RE_0_BUFF_LEN_MAX - 1)
-			{
-				recv0_buff[recv0_length++] = receivedData;
-
-				// 回显接收到的字符
-				DL_UART_Main_transmitData(UART_0_INST, receivedData);
-			}
-			else
-			{
-				recv0_length = 0;
+				if (recv0_length < RE_0_BUFF_LEN_MAX - 1)
+				{
+					recv0_buff[recv0_length++] = receivedData;
+				}
+				else
+				{
+					recv0_length = 0;
+				}
 			}
 
 			// 标记接收标志
