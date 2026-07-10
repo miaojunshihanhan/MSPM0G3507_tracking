@@ -58,7 +58,7 @@ uint8_t Tracking_ReadSensors(void)
 #define KI_MAX_X1000                  (50000)
 #define KD_MAX_X1000                  (50000)
 #define FF_MAX_X1000                  (50000)
-#define INTEGRAL_LIMIT_X1000          (1200000)
+#define INTEGRAL_MARGIN_X1000         (400000)
 #define PID_FLASH_ADDR                (0x010000u)
 #define PID_FLASH_MAGIC               (0x53504C32u)
 
@@ -381,6 +381,7 @@ static int32_t CalculateWheelPwm(SpeedWheel *wheel)
 	int32_t command_pwm;
 	int32_t error_delta;
 	int32_t integral_limit;
+	int32_t integral_update;
 
 	wheel->error = wheel->target - wheel->actual;
 
@@ -399,23 +400,25 @@ static int32_t CalculateWheelPwm(SpeedWheel *wheel)
 	error_delta = wheel->error - wheel->last_error;
 	wheel->last_error = wheel->error;
 
-	integral_limit = INTEGRAL_LIMIT_X1000;
-	if((min_pwm > 0) && (integral_limit > ((PWM_MAX - min_pwm) * 1000)))
-	{
-		integral_limit = (PWM_MAX - min_pwm) * 1000;
-	}
-
-	wheel->integral_x1000 += wheel->ki_x1000 * wheel->error;
-	wheel->integral_x1000 = LimitInt32(wheel->integral_x1000,
-	                                  -integral_limit,
-	                                  integral_limit);
-
 	base_pwm = (wheel->ff_x1000 * (int32_t)AbsInt32ToU32(wheel->target)) / 1000;
 	if(min_pwm > 0)
 	{
 		base_pwm += min_pwm;
 	}
 	base_pwm *= target_sign;
+
+	integral_limit = ((PWM_MAX - (int32_t)AbsInt32ToU32(base_pwm)) * 1000) +
+	                 INTEGRAL_MARGIN_X1000;
+	if(integral_limit < 0)
+	{
+		integral_limit = 0;
+	}
+
+	integral_update = wheel->ki_x1000 * wheel->error;
+	wheel->integral_x1000 += integral_update;
+	wheel->integral_x1000 = LimitInt32(wheel->integral_x1000,
+	                                  -integral_limit,
+	                                  integral_limit);
 
 	pid_pwm = ((wheel->kp_x1000 * wheel->error) +
 	           wheel->integral_x1000 +
@@ -555,13 +558,20 @@ static void StopSpeedLoop(void)
 
 static void PrintStatus(void)
 {
-	printf("LT_CNT10=%ld,RT_CNT10=%ld,LA_CNT10=%ld,RA_CNT10=%ld,LPWM=%ld,RPWM=%ld,",
+	uint8_t left_saturated = ((AbsInt32ToU32(left_wheel.pwm) >= PWM_MAX) &&
+	                          (left_wheel.target != left_wheel.actual)) ? 1u : 0u;
+	uint8_t right_saturated = ((AbsInt32ToU32(right_wheel.pwm) >= PWM_MAX) &&
+	                           (right_wheel.target != right_wheel.actual)) ? 1u : 0u;
+
+	printf("LT_CNT10=%ld,RT_CNT10=%ld,LA_CNT10=%ld,RA_CNT10=%ld,LPWM=%ld,RPWM=%ld,SATL=%u,SATR=%u,",
 	       (long)left_wheel.target,
 	       (long)right_wheel.target,
 	       (long)left_wheel.actual,
 	       (long)right_wheel.actual,
 	       (long)left_wheel.pwm,
-	       (long)right_wheel.pwm);
+	       (long)right_wheel.pwm,
+	       (unsigned int)left_saturated,
+	       (unsigned int)right_saturated);
 	PrintFixed3("KPL", left_wheel.kp_x1000);
 	printf(",");
 	PrintFixed3("KPR", right_wheel.kp_x1000);
