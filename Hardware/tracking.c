@@ -585,6 +585,13 @@ static void ResetTrackLoop(void)
 	track_loop.lost_ticks = 0u;
 }
 
+static uint8_t IsCenterLine(uint8_t line_mask)
+{
+	return ((line_mask == 0x08u) ||
+	        (line_mask == 0x10u) ||
+	        (line_mask == TRACK_CENTER_MASK)) ? 1u : 0u;
+}
+
 static void UpdateForwardPivotTarget(int32_t turn)
 {
 	if(turn > 0)
@@ -627,7 +634,7 @@ static int32_t CalculateLineError(uint8_t sensors, uint8_t *line_mask, uint8_t *
 	}
 
 	*line_lost = 0u;
-	if((mask == 0x08u) || (mask == 0x10u) || (mask == TRACK_CENTER_MASK))
+	if(IsCenterLine(mask) != 0u)
 	{
 		return 0;
 	}
@@ -696,9 +703,7 @@ static int32_t CalculateTrackTurn(void)
 	if(track_loop.right_angle_ticks > 0u)
 	{
 		if((track_loop.line_lost == 0u) &&
-		   ((track_loop.line_mask == 0x08u) ||
-		    (track_loop.line_mask == 0x10u) ||
-		    (track_loop.line_mask == TRACK_CENTER_MASK)))
+		   (IsCenterLine(track_loop.line_mask) != 0u))
 		{
 			track_loop.right_angle_ticks = 0u;
 			track_loop.right_angle_turn = 0;
@@ -747,10 +752,66 @@ static int32_t CalculateTrackTurn(void)
 	return output;
 }
 
+static void ApplyLostFollowTarget(int32_t turn)
+{
+	if(track_loop.lost_ticks >= TRACK_LOST_GRACE_TICKS)
+	{
+		UpdateBothSpeedTarget(0, 0);
+		return;
+	}
+
+	track_loop.lost_ticks++;
+	if(turn != 0)
+	{
+		UpdateForwardPivotTarget(TRACK_LOST_TURN * SignInt32(turn));
+		return;
+	}
+
+	UpdateBothSpeedTarget(track_loop.base_speed, track_loop.base_speed);
+}
+
+static int32_t GetTrackBaseSpeed(void)
+{
+	int32_t base;
+
+	if(track_loop.mode == TRACK_MODE_SPIN_ALIGN)
+	{
+		return 0;
+	}
+
+	base = track_loop.base_speed;
+	if((track_loop.mode == TRACK_MODE_FOLLOW) &&
+	   (AbsInt32ToU32(track_loop.error) >= TRACK_SLOW_ERROR))
+	{
+		base = LimitInt32(base - TRACK_SLOW_DELTA, 0, SPEED_COUNT_MAX);
+	}
+
+	return base;
+}
+
+static void ApplyTrackTarget(int32_t turn, int32_t base)
+{
+	if(track_loop.mode == TRACK_MODE_FOLLOW)
+	{
+		if(track_loop.right_angle != 0u)
+		{
+			UpdateForwardPivotTarget(turn);
+		}
+		else
+		{
+			UpdateBothSpeedTarget(LimitInt32(base + turn, 0, SPEED_COUNT_MAX),
+			                      LimitInt32(base - turn, 0, SPEED_COUNT_MAX));
+		}
+		return;
+	}
+
+	UpdateForwardPivotTarget(turn);
+}
+
 static void TrackLoop10ms(void)
 {
 	int32_t turn;
-	int32_t base;
+	int32_t base = 0;
 
 	if(track_loop.mode == TRACK_MODE_OFF)
 	{
@@ -762,55 +823,16 @@ static void TrackLoop10ms(void)
 	{
 		if(track_loop.mode == TRACK_MODE_FOLLOW)
 		{
-			if(track_loop.lost_ticks >= TRACK_LOST_GRACE_TICKS)
-			{
-				UpdateBothSpeedTarget(0, 0);
-				return;
-			}
-			track_loop.lost_ticks++;
-			if(turn != 0)
-			{
-				UpdateForwardPivotTarget(TRACK_LOST_TURN * SignInt32(turn));
-			}
-			else
-			{
-				UpdateBothSpeedTarget(track_loop.base_speed, track_loop.base_speed);
-			}
+			ApplyLostFollowTarget(turn);
 			return;
 		}
-		else
-		{
-			base = 0;
-		}
-	}
-	else if(track_loop.mode == TRACK_MODE_SPIN_ALIGN)
-	{
-		base = 0;
 	}
 	else
 	{
-		base = track_loop.base_speed;
+		base = GetTrackBaseSpeed();
 	}
 
-	if((track_loop.mode == TRACK_MODE_FOLLOW) &&
-	   (AbsInt32ToU32(track_loop.error) >= TRACK_SLOW_ERROR))
-	{
-		base = LimitInt32(base - TRACK_SLOW_DELTA, 0, SPEED_COUNT_MAX);
-	}
-
-	if((track_loop.mode == TRACK_MODE_FOLLOW) && (track_loop.right_angle != 0u))
-	{
-		UpdateForwardPivotTarget(turn);
-	}
-	else if(track_loop.mode == TRACK_MODE_FOLLOW)
-	{
-		UpdateBothSpeedTarget(LimitInt32(base + turn, 0, SPEED_COUNT_MAX),
-		                      LimitInt32(base - turn, 0, SPEED_COUNT_MAX));
-	}
-	else
-	{
-		UpdateForwardPivotTarget(turn);
-	}
+	ApplyTrackTarget(turn, base);
 }
 
 static void SpeedLoop10ms(void)

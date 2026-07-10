@@ -605,6 +605,16 @@
               <FilePath>..\Hardware\oled.h</FilePath>
             </File>
             <File>
+              <FileName>status_display.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Hardware\status_display.c</FilePath>
+            </File>
+            <File>
+              <FileName>status_display.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Hardware\status_display.h</FilePath>
+            </File>
+            <File>
               <FileName>oledfont.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Hardware\oledfont.h</FilePath>
