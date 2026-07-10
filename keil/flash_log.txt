@@ -4,4 +4,4 @@ Info: executing SWD power up
 Info: Current state of access point is: 80027 
 Info: Current state of access point is: 79002f 
 Erase Done.Programming Done.Verify OK.Application running ...
-Flash Load finished at 23:37:18
+Flash Load finished at 00:58:53

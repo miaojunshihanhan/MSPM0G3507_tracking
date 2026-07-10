@@ -77,10 +77,15 @@ uint8_t Tracking_ReadSensors(void)
 #define TRACK_DEADBAND_DEFAULT        (750)
 #define TRACK_FOLLOW_DEADBAND         (250)
 #define TRACK_CENTER_MASK             (0x18u)
+#define TRACK_POSITIVE_SIDE_MASK      (0x03u)
+#define TRACK_NEGATIVE_SIDE_MASK      (0xC0u)
+#define TRACK_RIGHT_ANGLE_TURN        (8)
+#define TRACK_RIGHT_ANGLE_HOLD_TICKS  (120u)
+#define TRACK_LOST_TURN               (6)
 #define TRACK_SLOW_ERROR              (2000)
 #define TRACK_SLOW_DELTA              (2)
 #define TRACK_ERROR_LOST              (8000)
-#define TRACK_LOST_GRACE_TICKS        (30u)
+#define TRACK_LOST_GRACE_TICKS        (500u)
 
 #define MOTOR_FORWARD_DIR             (1u)
 #define MOTOR_REVERSE_DIR             (0u)
@@ -135,12 +140,15 @@ typedef struct
 	uint8_t sensors;
 	uint8_t line_mask;
 	uint8_t line_lost;
-	uint8_t lost_ticks;
+	uint8_t right_angle;
+	uint16_t right_angle_ticks;
+	int32_t right_angle_turn;
+	uint16_t lost_ticks;
 } TrackLoop;
 
 static SpeedWheel left_wheel = {0, 0, 0, 0, 0, 0, 0, KP_DEFAULT_X1000, KI_DEFAULT_X1000, KD_DEFAULT_X1000, FF_DEFAULT_X1000};
 static SpeedWheel right_wheel = {0, 0, 0, 0, 0, 0, 0, KP_DEFAULT_X1000, KI_DEFAULT_X1000, KD_DEFAULT_X1000, FF_DEFAULT_X1000};
-static TrackLoop track_loop = {0, 0, 0, 0, TRACK_KP_DEFAULT_X1000, TRACK_KI_DEFAULT_X1000, TRACK_KD_DEFAULT_X1000, TRACK_BASE_DEFAULT, TRACK_TURN_MAX_DEFAULT, TRACK_TURN_MIN_DEFAULT, TRACK_DEADBAND_DEFAULT, TRACK_MODE_OFF, 0xFFu, 0u, 1u, 0u};
+static TrackLoop track_loop = {0, 0, 0, 0, TRACK_KP_DEFAULT_X1000, TRACK_KI_DEFAULT_X1000, TRACK_KD_DEFAULT_X1000, TRACK_BASE_DEFAULT, TRACK_TURN_MAX_DEFAULT, TRACK_TURN_MIN_DEFAULT, TRACK_DEADBAND_DEFAULT, TRACK_MODE_OFF, 0xFFu, 0u, 1u, 0u, 0u, 0, 0u};
 
 static volatile uint8_t speed_loop_pending = 0u;
 static volatile uint8_t uart_line_ready = 0u;
@@ -571,6 +579,9 @@ static void ResetTrackLoop(void)
 	track_loop.integral_x1000 = 0;
 	track_loop.output = 0;
 	track_loop.line_lost = 0u;
+	track_loop.right_angle = 0u;
+	track_loop.right_angle_ticks = 0u;
+	track_loop.right_angle_turn = 0;
 	track_loop.lost_ticks = 0u;
 }
 
@@ -632,12 +643,34 @@ static int32_t CalculateLineError(uint8_t sensors, uint8_t *line_mask, uint8_t *
 	return sum / count;
 }
 
+static int32_t GetRightAngleTurn(uint8_t line_mask)
+{
+	uint8_t has_center = ((line_mask & TRACK_CENTER_MASK) != 0u) ? 1u : 0u;
+	uint8_t has_positive_side = ((line_mask & TRACK_POSITIVE_SIDE_MASK) != 0u) ? 1u : 0u;
+	uint8_t has_negative_side = ((line_mask & TRACK_NEGATIVE_SIDE_MASK) != 0u) ? 1u : 0u;
+
+	if(has_center != 0u)
+	{
+		return 0;
+	}
+	if((has_positive_side != 0u) && (has_negative_side == 0u))
+	{
+		return TRACK_RIGHT_ANGLE_TURN;
+	}
+	if((has_negative_side != 0u) && (has_positive_side == 0u))
+	{
+		return -TRACK_RIGHT_ANGLE_TURN;
+	}
+	return 0;
+}
+
 static int32_t CalculateTrackTurn(void)
 {
 	int32_t error_delta;
 	int32_t output;
 	int32_t turn_abs;
 	int32_t effective_deadband;
+	int32_t right_angle_turn;
 
 	track_loop.sensors = Tracking_ReadSensors();
 	track_loop.error = CalculateLineError(track_loop.sensors,
@@ -646,6 +679,40 @@ static int32_t CalculateTrackTurn(void)
 	if(track_loop.line_lost == 0u)
 	{
 		track_loop.lost_ticks = 0u;
+	}
+	track_loop.right_angle = 0u;
+	right_angle_turn = GetRightAngleTurn(track_loop.line_mask);
+	if(right_angle_turn != 0)
+	{
+		track_loop.error = right_angle_turn * 1000;
+		track_loop.last_error = track_loop.error;
+		track_loop.integral_x1000 = 0;
+		track_loop.output = right_angle_turn;
+		track_loop.right_angle = 1u;
+		track_loop.right_angle_ticks = TRACK_RIGHT_ANGLE_HOLD_TICKS;
+		track_loop.right_angle_turn = right_angle_turn;
+		return right_angle_turn;
+	}
+	if(track_loop.right_angle_ticks > 0u)
+	{
+		if((track_loop.line_lost == 0u) &&
+		   ((track_loop.line_mask == 0x08u) ||
+		    (track_loop.line_mask == 0x10u) ||
+		    (track_loop.line_mask == TRACK_CENTER_MASK)))
+		{
+			track_loop.right_angle_ticks = 0u;
+			track_loop.right_angle_turn = 0;
+		}
+		else
+		{
+			track_loop.right_angle_ticks--;
+			track_loop.error = track_loop.right_angle_turn * 1000;
+			track_loop.last_error = track_loop.error;
+			track_loop.integral_x1000 = 0;
+			track_loop.output = track_loop.right_angle_turn;
+			track_loop.right_angle = 1u;
+			return track_loop.right_angle_turn;
+		}
 	}
 
 	effective_deadband = (track_loop.mode == TRACK_MODE_FOLLOW) ?
@@ -695,13 +762,20 @@ static void TrackLoop10ms(void)
 	{
 		if(track_loop.mode == TRACK_MODE_FOLLOW)
 		{
-			if((turn == 0) || (track_loop.lost_ticks >= TRACK_LOST_GRACE_TICKS))
+			if(track_loop.lost_ticks >= TRACK_LOST_GRACE_TICKS)
 			{
 				UpdateBothSpeedTarget(0, 0);
 				return;
 			}
 			track_loop.lost_ticks++;
-			UpdateForwardPivotTarget(turn);
+			if(turn != 0)
+			{
+				UpdateForwardPivotTarget(TRACK_LOST_TURN * SignInt32(turn));
+			}
+			else
+			{
+				UpdateBothSpeedTarget(track_loop.base_speed, track_loop.base_speed);
+			}
 			return;
 		}
 		else
@@ -724,7 +798,11 @@ static void TrackLoop10ms(void)
 		base = LimitInt32(base - TRACK_SLOW_DELTA, 0, SPEED_COUNT_MAX);
 	}
 
-	if(track_loop.mode == TRACK_MODE_FOLLOW)
+	if((track_loop.mode == TRACK_MODE_FOLLOW) && (track_loop.right_angle != 0u))
+	{
+		UpdateForwardPivotTarget(turn);
+	}
+	else if(track_loop.mode == TRACK_MODE_FOLLOW)
 	{
 		UpdateBothSpeedTarget(LimitInt32(base + turn, 0, SPEED_COUNT_MAX),
 		                      LimitInt32(base - turn, 0, SPEED_COUNT_MAX));
@@ -834,7 +912,7 @@ static void PrintStatus(void)
 	PrintFixed3("FFL", left_wheel.ff_x1000);
 	printf(",");
 	PrintFixed3("FFR", right_wheel.ff_x1000);
-	printf(",MINPWM=%ld,SLEW=%ld,TRK=%u,TERR=%ld,TURN=%ld,SENS=0x%02X,LINE=0x%02X,LOST=%u,TBASE=%ld,TMAX=%ld,TMIN=%ld,TDB=%ld,",
+	printf(",MINPWM=%ld,SLEW=%ld,TRK=%u,TERR=%ld,TURN=%ld,SENS=0x%02X,LINE=0x%02X,LOST=%u,LTICK=%u,RA=%u,RAT=%u,TBASE=%ld,TMAX=%ld,TMIN=%ld,TDB=%ld,",
 	       (long)min_pwm,
 	       (long)pwm_slew,
 	       (unsigned int)track_loop.mode,
@@ -843,6 +921,9 @@ static void PrintStatus(void)
 	       (unsigned int)track_loop.sensors,
 	       (unsigned int)track_loop.line_mask,
 	       (unsigned int)track_loop.line_lost,
+	       (unsigned int)track_loop.lost_ticks,
+	       (unsigned int)track_loop.right_angle,
+	       (unsigned int)track_loop.right_angle_ticks,
 	       (long)track_loop.base_speed,
 	       (long)track_loop.turn_max,
 	       (long)track_loop.turn_min,
