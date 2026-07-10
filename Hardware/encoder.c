@@ -1,4 +1,5 @@
 #include "encoder.h"
+#include "key.h"
 
 volatile int32_t Get_Encoder_countA = 0;
 volatile int32_t Get_Encoder_countB = 0;
@@ -61,4 +62,10 @@ void GROUP1_IRQHandler(void)
 	}
 	DL_GPIO_clearInterruptStatus(
 		ENCODERB_PORT, ENCODERB_E2A_PIN | ENCODERB_E2B_PIN);
+
+	if((DL_GPIO_getEnabledInterruptStatus(KEY_PORT, KEY_PIN_21_PIN) & KEY_PIN_21_PIN) == KEY_PIN_21_PIN)
+	{
+		Key_B21_IRQHandler();
+		DL_GPIO_clearInterruptStatus(KEY_PORT, KEY_PIN_21_PIN);
+	}
 }

@@ -1,65 +1,114 @@
 #include "key.h"
-/***********************************************
-公司：轮趣科技（东莞）有限公司
-品牌：WHEELTEC
-官网：wheeltec.net
-淘宝店铺：shop114407458.taobao.com 
-速卖通: https://minibalance.aliexpress.com/store/4455017
-版本：V1.0
-修改时间：2024-07-019
 
-Brand: WHEELTEC
-Website: wheeltec.net
-Taobao shop: shop114407458.taobao.com 
-Aliexpress: https://minibalance.aliexpress.com/store/4455017
-Version: V1.0
-Update：2024-07-019
+#define KEY_RELEASED_LEVEL     (1u)
+#define KEY_PRESSED_LEVEL      (0u)
+#define KEY_DEBOUNCE_MS        (10u)
 
-All rights reserved
-***********************************************/
-static volatile uint8_t key_press_event = 0;
+static volatile uint8_t key_press_event = 0u;
+static volatile uint8_t key_irq_pending = 0u;
+static volatile uint8_t key_pressed = 0u;
 
-// 每5 ms调用一次，连续稳定20 ms后确认按键状态
-void Key_Scan_5ms(void)
+static uint8_t Key_ReadLevel(void)
 {
-	static uint8_t last_sample = 1;
-	static uint8_t stable_state = 1;
-	static uint8_t stable_count = 0;
+	return DL_GPIO_readPins(KEY_PORT, KEY_PIN_21_PIN) ? KEY_RELEASED_LEVEL : KEY_PRESSED_LEVEL;
+}
+
+static void Key_UpdateStableState(uint8_t current_sample)
+{
+	static uint8_t stable_state = KEY_RELEASED_LEVEL;
+
+	if(stable_state != current_sample)
+	{
+		stable_state = current_sample;
+		key_pressed = (current_sample == KEY_PRESSED_LEVEL) ? 1u : 0u;
+		if(stable_state == KEY_PRESSED_LEVEL)
+		{
+			key_press_event = 1u;
+		}
+	}
+}
+
+void Key_B21_IRQHandler(void)
+{
+	key_irq_pending = 1u;
+}
+
+void Key_Task_1ms(void)
+{
+	static uint8_t last_sample = KEY_RELEASED_LEVEL;
+	static uint8_t stable_state = KEY_RELEASED_LEVEL;
+	static uint8_t stable_count = 0u;
 	uint8_t current_sample;
 
-	current_sample = DL_GPIO_readPins(KEY_PORT, KEY_PIN_21_PIN) ? 1 : 0;
+	current_sample = Key_ReadLevel();
+	if(key_irq_pending != 0u)
+	{
+		key_irq_pending = 0u;
+		stable_count = 0u;
+	}
+
 	if(current_sample == last_sample)
 	{
-		if(stable_count < 4)
+		if(stable_count < KEY_DEBOUNCE_MS)
 		{
 			stable_count++;
-		}
-		if((stable_count >= 4) && (stable_state != current_sample))
-		{
-			stable_state = current_sample;
-			if(stable_state == 0)
-			{
-				key_press_event = 1;
-			}
 		}
 	}
 	else
 	{
 		last_sample = current_sample;
-		stable_count = 1;
+		stable_count = 1u;
+	}
+
+	if((stable_count >= KEY_DEBOUNCE_MS) && (stable_state != current_sample))
+	{
+		stable_state = current_sample;
+		Key_UpdateStableState(stable_state);
 	}
 }
 
-// 返回一次按下事件，不等待按键松开
+uint8_t Key_IsPressed(void)
+{
+	return key_pressed;
+}
+
+void Key_Scan_5ms(void)
+{
+	static uint8_t last_sample = KEY_RELEASED_LEVEL;
+	static uint8_t stable_count = 0u;
+	uint8_t current_sample;
+
+	current_sample = Key_ReadLevel();
+	if(current_sample == last_sample)
+	{
+		if(stable_count < 4u)
+		{
+			stable_count++;
+		}
+		if(stable_count >= 4u)
+		{
+			Key_UpdateStableState(current_sample);
+		}
+	}
+	else
+	{
+		last_sample = current_sample;
+		stable_count = 1u;
+	}
+}
+
 uint8_t click(void)
 {
-	if(key_press_event)
+	uint8_t event;
+
+	__disable_irq();
+	event = key_press_event;
+	key_press_event = 0u;
+	__enable_irq();
+
+	if(event != 0u)
 	{
-		key_press_event = 0;
-		return 1;
+		return 1u;
 	}
-	return 0;
+	return 0u;
 }
-
-
-

@@ -18,6 +18,8 @@ void board_init(void)
 	//HEART心跳中断
 	NVIC_ClearPendingIRQ(TIMA0_INT_IRQn);
 	NVIC_EnableIRQ(TIMA0_INT_IRQn);
+	NVIC_ClearPendingIRQ(GPIOB_INT_IRQn);
+	NVIC_EnableIRQ(GPIOB_INT_IRQn);
 	
 	printf("Board Init [[ ** LCKFB ** ]]\r\n");
 }

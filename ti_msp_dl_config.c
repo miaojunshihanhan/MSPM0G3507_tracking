@@ -135,33 +135,57 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
 
     DL_GPIO_initDigitalOutput(BIN2_Pin_Bin2_IOMUX);
 
-    DL_GPIO_initDigitalInput(ENCODERA_E1A_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(ENCODERA_E1A_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(ENCODERA_E1B_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(ENCODERA_E1B_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(ENCODERB_E2A_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(ENCODERB_E2A_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(ENCODERB_E2B_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(ENCODERB_E2B_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(GrayA_S1_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(GrayA_S1_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(GrayA_S2_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(GrayA_S2_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(GrayA_S3_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(GrayA_S3_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(GrayA_S4_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(GrayA_S4_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(GrayA_S7_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(GrayA_S7_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
     DL_GPIO_initDigitalOutput(OLED_SCL_IOMUX);
 
     DL_GPIO_initDigitalOutput(OLED_SDA_IOMUX);
 
-    DL_GPIO_initDigitalInput(GraytB_S5_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(GraytB_S5_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(GraytB_S6_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(GraytB_S6_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalInput(GraytB_S8_IOMUX);
+    DL_GPIO_initDigitalInputFeatures(GraytB_S8_IOMUX,
+		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
     DL_GPIO_clearPins(GPIOA, AIN1_PIN_12_PIN |
 		AIN2_PIN_13_PIN |
@@ -185,10 +209,12 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
     DL_GPIO_enableOutput(GPIOB, LED_PIN_0_PIN);
     DL_GPIO_setLowerPinsPolarity(GPIOB, DL_GPIO_PIN_14_EDGE_RISE |
 		DL_GPIO_PIN_15_EDGE_RISE);
-    DL_GPIO_setUpperPinsPolarity(GPIOB, DL_GPIO_PIN_21_EDGE_RISE);
-    DL_GPIO_clearInterruptStatus(GPIOB, ENCODERB_E2A_PIN |
+    DL_GPIO_setUpperPinsPolarity(GPIOB, DL_GPIO_PIN_21_EDGE_RISE_FALL);
+    DL_GPIO_clearInterruptStatus(GPIOB, KEY_PIN_21_PIN |
+		ENCODERB_E2A_PIN |
 		ENCODERB_E2B_PIN);
-    DL_GPIO_enableInterrupt(GPIOB, ENCODERB_E2A_PIN |
+    DL_GPIO_enableInterrupt(GPIOB, KEY_PIN_21_PIN |
+		ENCODERB_E2A_PIN |
 		ENCODERB_E2B_PIN);
 
 }
@@ -197,14 +223,19 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
 
 SYSCONFIG_WEAK void SYSCFG_DL_SYSCTL_init(void)
 {
+
+	//Low Power Mode is configured to be SLEEP0
     DL_SYSCTL_setBORThreshold(DL_SYSCTL_BOR_THRESHOLD_LEVEL_0);
 
-    DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_BASE);
-    DL_SYSCTL_disableHFXT();
-    DL_SYSCTL_disableSYSPLL();
-    DL_SYSCTL_enableMFCLK();
 
+	DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_BASE);
+	/* Set default configuration */
+	DL_SYSCTL_disableHFXT();
+	DL_SYSCTL_disableSYSPLL();
+    DL_SYSCTL_enableMFCLK();
+    /* INT_GROUP1 Priority */
     NVIC_SetPriority(GPIOB_INT_IRQn, 0);
+
 }
 
 
@@ -233,6 +264,9 @@ SYSCONFIG_WEAK void SYSCFG_DL_PWM_0_init(void) {
 
     DL_TimerA_initPWMMode(
         PWM_0_INST, (DL_TimerA_PWMConfig *) &gPWM_0Config);
+
+    // Set Counter control to the smallest CC index being used
+    DL_TimerA_setCounterControl(PWM_0_INST,DL_TIMER_CZC_CCCTL0_ZCOND,DL_TIMER_CAC_CCCTL0_ACOND,DL_TIMER_CLC_CCCTL0_LCOND);
 
     DL_TimerA_setCaptureCompareOutCtl(PWM_0_INST, DL_TIMER_CC_OCTL_INIT_VAL_LOW,
 		DL_TIMER_CC_OCTL_INV_OUT_DISABLED, DL_TIMER_CC_OCTL_SRC_FUNCVAL,
@@ -297,7 +331,6 @@ SYSCONFIG_WEAK void SYSCFG_DL_HEART_init(void) {
 }
 
 
-
 static const DL_UART_Main_ClockConfig gUART_0ClockConfig = {
     .clockSel    = DL_UART_MAIN_CLOCK_MFCLK,
     .divideRatio = DL_UART_MAIN_CLOCK_DIVIDE_RATIO_1
@@ -319,11 +352,11 @@ SYSCONFIG_WEAK void SYSCFG_DL_UART_0_init(void)
     DL_UART_Main_init(UART_0_INST, (DL_UART_Main_Config *) &gUART_0Config);
     /*
      * Configure baud rate by setting oversampling and baud rate divisors.
-     *  Target baud rate: 9600
-     *  Actual baud rate: 9598.08
+     *  Target baud rate: 115200
+     *  Actual baud rate: 115107.91
      */
     DL_UART_Main_setOversampling(UART_0_INST, DL_UART_OVERSAMPLING_RATE_16X);
-    DL_UART_Main_setBaudRateDivisor(UART_0_INST, UART_0_IBRD_4_MHZ_9600_BAUD, UART_0_FBRD_4_MHZ_9600_BAUD);
+    DL_UART_Main_setBaudRateDivisor(UART_0_INST, UART_0_IBRD_4_MHZ_115200_BAUD, UART_0_FBRD_4_MHZ_115200_BAUD);
 
 
     /* Configure Interrupts */

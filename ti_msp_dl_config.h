@@ -41,6 +41,7 @@
 #define ti_msp_dl_config_h
 
 #define CONFIG_MSPM0G350X
+#define CONFIG_MSPM0G3507
 
 #if defined(__ti_version__) || defined(__TI_COMPILER_VERSION__)
 #define SYSCONFIG_WEAK __attribute__((weak))
@@ -107,6 +108,7 @@ extern "C" {
 
 /* Defines for UART_0 */
 #define UART_0_INST                                                        UART0
+#define UART_0_INST_FREQUENCY                                            4000000
 #define UART_0_INST_IRQHandler                                  UART0_IRQHandler
 #define UART_0_INST_INT_IRQN                                      UART0_INT_IRQn
 #define GPIO_UART_0_RX_PORT                                                GPIOA
@@ -117,9 +119,9 @@ extern "C" {
 #define GPIO_UART_0_IOMUX_TX                                     (IOMUX_PINCM21)
 #define GPIO_UART_0_IOMUX_RX_FUNC                      IOMUX_PINCM22_PF_UART0_RX
 #define GPIO_UART_0_IOMUX_TX_FUNC                      IOMUX_PINCM21_PF_UART0_TX
-#define UART_0_BAUD_RATE                                                (9600)
-#define UART_0_IBRD_4_MHZ_9600_BAUD                                         (26)
-#define UART_0_FBRD_4_MHZ_9600_BAUD                                          (3)
+#define UART_0_BAUD_RATE                                                (115200)
+#define UART_0_IBRD_4_MHZ_115200_BAUD                                        (2)
+#define UART_0_FBRD_4_MHZ_115200_BAUD                                       (11)
 
 
 
@@ -135,6 +137,11 @@ extern "C" {
 #define KEY_PORT                                                         (GPIOB)
 
 /* Defines for PIN_21: GPIOB.21 with pinCMx 49 on package pin 20 */
+// groups represented: ["ENCODERB","KEY"]
+// pins affected: ["E2A","E2B","PIN_21"]
+#define GPIO_MULTIPLE_GPIOB_INT_IRQN                            (GPIOB_INT_IRQn)
+#define GPIO_MULTIPLE_GPIOB_INT_IIDX            (DL_INTERRUPT_GROUP1_IIDX_GPIOB)
+#define KEY_PIN_21_IIDX                                     (DL_GPIO_IIDX_DIO21)
 #define KEY_PIN_21_PIN                                          (DL_GPIO_PIN_21)
 #define KEY_PIN_21_IOMUX                                         (IOMUX_PINCM49)
 /* Port definition for Pin Group AIN1 */
@@ -179,9 +186,6 @@ extern "C" {
 #define ENCODERB_PORT                                                    (GPIOB)
 
 /* Defines for E2A: GPIOB.14 with pinCMx 31 on package pin 2 */
-// pins affected by this interrupt request:["E2A","E2B"]
-#define ENCODERB_INT_IRQN                                       (GPIOB_INT_IRQn)
-#define ENCODERB_INT_IIDX                       (DL_INTERRUPT_GROUP1_IIDX_GPIOB)
 #define ENCODERB_E2A_IIDX                                   (DL_GPIO_IIDX_DIO14)
 #define ENCODERB_E2A_PIN                                        (DL_GPIO_PIN_14)
 #define ENCODERB_E2A_IOMUX                                       (IOMUX_PINCM31)
@@ -228,6 +232,7 @@ extern "C" {
 /* Defines for S8: GPIOB.20 with pinCMx 48 on package pin 19 */
 #define GraytB_S8_PIN                                           (DL_GPIO_PIN_20)
 #define GraytB_S8_IOMUX                                          (IOMUX_PINCM48)
+
 
 
 
