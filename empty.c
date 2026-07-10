@@ -30,7 +30,7 @@ int main()
 	printf("System Clock: 32MHz\r\n");
 	printf("UART Baudrate: 115200\r\n");
 	printf("LED will blink every 500ms\r\n");
-	printf("VOFA: targetL,targetR,actualL,actualR,pwmL,pwmR\r\n");
+	printf("VOFA: targetL,targetR,actualL,actualR,pwmL,pwmR,lineErr,turn,sensors,lineMask\r\n");
 
 	while(1)
 	{

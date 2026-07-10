@@ -49,6 +49,8 @@ uint8_t Tracking_ReadSensors(void)
 #define SPEED_COUNT_MAX               (999)
 #define PWM_MAX                       (3199)
 #define PWM_MIN_DEFAULT               (500)
+#define PWM_MIN_LOW_SPEED             (260)
+#define PWM_MIN_LOW_SPEED_COUNT       (10)
 #define PWM_SLEW_DEFAULT              (900)
 #define KP_DEFAULT_X1000              (20000)
 #define KI_DEFAULT_X1000              (2000)
@@ -61,6 +63,24 @@ uint8_t Tracking_ReadSensors(void)
 #define INTEGRAL_MARGIN_X1000         (400000)
 #define PID_FLASH_ADDR                (0x010000u)
 #define PID_FLASH_MAGIC               (0x53504C32u)
+
+#define TRACK_MODE_OFF                (0u)
+#define TRACK_MODE_SPIN_ALIGN         (1u)
+#define TRACK_MODE_FOLLOW             (2u)
+#define TRACK_KP_DEFAULT_X1000        (1)
+#define TRACK_KI_DEFAULT_X1000        (0)
+#define TRACK_KD_DEFAULT_X1000        (1)
+#define TRACK_GAIN_MAX_X1000          (1000)
+#define TRACK_BASE_DEFAULT            (4)
+#define TRACK_TURN_MAX_DEFAULT        (3)
+#define TRACK_TURN_MIN_DEFAULT        (0)
+#define TRACK_DEADBAND_DEFAULT        (750)
+#define TRACK_FOLLOW_DEADBAND         (250)
+#define TRACK_CENTER_MASK             (0x18u)
+#define TRACK_SLOW_ERROR              (2000)
+#define TRACK_SLOW_DELTA              (2)
+#define TRACK_ERROR_LOST              (8000)
+#define TRACK_LOST_GRACE_TICKS        (30u)
 
 #define MOTOR_FORWARD_DIR             (1u)
 #define MOTOR_REVERSE_DIR             (0u)
@@ -98,8 +118,29 @@ typedef struct
 	uint32_t checksum;
 } SpeedPidConfig;
 
+typedef struct
+{
+	int32_t error;
+	int32_t last_error;
+	int32_t integral_x1000;
+	int32_t output;
+	int32_t kp_x1000;
+	int32_t ki_x1000;
+	int32_t kd_x1000;
+	int32_t base_speed;
+	int32_t turn_max;
+	int32_t turn_min;
+	int32_t deadband;
+	uint8_t mode;
+	uint8_t sensors;
+	uint8_t line_mask;
+	uint8_t line_lost;
+	uint8_t lost_ticks;
+} TrackLoop;
+
 static SpeedWheel left_wheel = {0, 0, 0, 0, 0, 0, 0, KP_DEFAULT_X1000, KI_DEFAULT_X1000, KD_DEFAULT_X1000, FF_DEFAULT_X1000};
 static SpeedWheel right_wheel = {0, 0, 0, 0, 0, 0, 0, KP_DEFAULT_X1000, KI_DEFAULT_X1000, KD_DEFAULT_X1000, FF_DEFAULT_X1000};
+static TrackLoop track_loop = {0, 0, 0, 0, TRACK_KP_DEFAULT_X1000, TRACK_KI_DEFAULT_X1000, TRACK_KD_DEFAULT_X1000, TRACK_BASE_DEFAULT, TRACK_TURN_MAX_DEFAULT, TRACK_TURN_MIN_DEFAULT, TRACK_DEADBAND_DEFAULT, TRACK_MODE_OFF, 0xFFu, 0u, 1u, 0u};
 
 static volatile uint8_t speed_loop_pending = 0u;
 static volatile uint8_t uart_line_ready = 0u;
@@ -107,7 +148,7 @@ static volatile uint8_t uart_line_index = 0u;
 static volatile uint8_t uart_idle_ms = 0u;
 static volatile char uart_line_buf[UART_LINE_MAX];
 
-static uint8_t vofa_enabled = 1u;
+static uint8_t vofa_enabled = 0u;
 static uint16_t vofa_period_ms = VOFA_DEFAULT_PERIOD_MS;
 static uint16_t cmd_quiet_ms = 0u;
 static int32_t min_pwm = PWM_MIN_DEFAULT;
@@ -165,6 +206,17 @@ static int32_t SignInt32(int32_t value)
 		return -1;
 	}
 	return 0;
+}
+
+static int32_t GetEffectiveMinPwm(int32_t target)
+{
+	uint32_t target_abs = AbsInt32ToU32(target);
+
+	if((target_abs > 0u) && (target_abs <= PWM_MIN_LOW_SPEED_COUNT))
+	{
+		return LimitInt32(PWM_MIN_LOW_SPEED, 0, PWM_MAX);
+	}
+	return min_pwm;
 }
 
 static int32_t EncoderDeltaToSpeed(int32_t current_count, int32_t *last_count, int32_t encoder_dir)
@@ -382,6 +434,7 @@ static int32_t CalculateWheelPwm(SpeedWheel *wheel)
 	int32_t error_delta;
 	int32_t integral_limit;
 	int32_t integral_update;
+	int32_t effective_min_pwm;
 
 	wheel->error = wheel->target - wheel->actual;
 
@@ -400,10 +453,11 @@ static int32_t CalculateWheelPwm(SpeedWheel *wheel)
 	error_delta = wheel->error - wheel->last_error;
 	wheel->last_error = wheel->error;
 
+	effective_min_pwm = GetEffectiveMinPwm(wheel->target);
 	base_pwm = (wheel->ff_x1000 * (int32_t)AbsInt32ToU32(wheel->target)) / 1000;
-	if(min_pwm > 0)
+	if(effective_min_pwm > 0)
 	{
-		base_pwm += min_pwm;
+		base_pwm += effective_min_pwm;
 	}
 	base_pwm *= target_sign;
 
@@ -494,6 +548,12 @@ static void SetBothSpeedTarget(int32_t left_target, int32_t right_target)
 	right_wheel.last_error = 0;
 }
 
+static void UpdateBothSpeedTarget(int32_t left_target, int32_t right_target)
+{
+	left_wheel.target = LimitInt32(left_target, -SPEED_COUNT_MAX, SPEED_COUNT_MAX);
+	right_wheel.target = LimitInt32(right_target, -SPEED_COUNT_MAX, SPEED_COUNT_MAX);
+}
+
 static void SetSingleSpeedTarget(SpeedWheel *active_wheel, SpeedWheel *idle_wheel, int32_t target)
 {
 	active_wheel->target = LimitInt32(target, -SPEED_COUNT_MAX, SPEED_COUNT_MAX);
@@ -502,6 +562,177 @@ static void SetSingleSpeedTarget(SpeedWheel *active_wheel, SpeedWheel *idle_whee
 	idle_wheel->integral_x1000 = 0;
 	active_wheel->last_error = 0;
 	idle_wheel->last_error = 0;
+}
+
+static void ResetTrackLoop(void)
+{
+	track_loop.error = 0;
+	track_loop.last_error = 0;
+	track_loop.integral_x1000 = 0;
+	track_loop.output = 0;
+	track_loop.line_lost = 0u;
+	track_loop.lost_ticks = 0u;
+}
+
+static void UpdateForwardPivotTarget(int32_t turn)
+{
+	if(turn > 0)
+	{
+		UpdateBothSpeedTarget(LimitInt32(turn, 0, SPEED_COUNT_MAX), 0);
+	}
+	else if(turn < 0)
+	{
+		UpdateBothSpeedTarget(0, LimitInt32(-turn, 0, SPEED_COUNT_MAX));
+	}
+	else
+	{
+		UpdateBothSpeedTarget(0, 0);
+	}
+}
+
+static int32_t CalculateLineError(uint8_t sensors, uint8_t *line_mask, uint8_t *line_lost)
+{
+	static const int16_t sensor_position[8] = {
+		3500, 2500, 1500, 500, -500, -1500, -2500, -3500
+	};
+	uint8_t mask = (uint8_t)(~sensors) & 0xFFu;
+	uint8_t i;
+	int32_t sum = 0;
+	int32_t count = 0;
+
+	*line_mask = mask;
+	if(mask == 0u)
+	{
+		*line_lost = 1u;
+		if(track_loop.error > 0)
+		{
+			return TRACK_ERROR_LOST;
+		}
+		if(track_loop.error < 0)
+		{
+			return -TRACK_ERROR_LOST;
+		}
+		return 0;
+	}
+
+	*line_lost = 0u;
+	if((mask == 0x08u) || (mask == 0x10u) || (mask == TRACK_CENTER_MASK))
+	{
+		return 0;
+	}
+	for(i = 0u; i < 8u; i++)
+	{
+		if((mask & (uint8_t)(1u << i)) != 0u)
+		{
+			sum += sensor_position[i];
+			count++;
+		}
+	}
+
+	return sum / count;
+}
+
+static int32_t CalculateTrackTurn(void)
+{
+	int32_t error_delta;
+	int32_t output;
+	int32_t turn_abs;
+	int32_t effective_deadband;
+
+	track_loop.sensors = Tracking_ReadSensors();
+	track_loop.error = CalculateLineError(track_loop.sensors,
+	                                      &track_loop.line_mask,
+	                                      &track_loop.line_lost);
+	if(track_loop.line_lost == 0u)
+	{
+		track_loop.lost_ticks = 0u;
+	}
+
+	effective_deadband = (track_loop.mode == TRACK_MODE_FOLLOW) ?
+	                     TRACK_FOLLOW_DEADBAND : track_loop.deadband;
+	if(AbsInt32ToU32(track_loop.error) <= (uint32_t)effective_deadband)
+	{
+		track_loop.error = 0;
+	}
+
+	error_delta = track_loop.error - track_loop.last_error;
+	track_loop.last_error = track_loop.error;
+	track_loop.integral_x1000 += track_loop.ki_x1000 * track_loop.error;
+	track_loop.integral_x1000 = LimitInt32(track_loop.integral_x1000,
+	                                      -((int32_t)track_loop.turn_max * 1000),
+	                                      ((int32_t)track_loop.turn_max * 1000));
+
+	output = ((track_loop.kp_x1000 * track_loop.error) +
+	          track_loop.integral_x1000 +
+	          (track_loop.kd_x1000 * error_delta)) / 1000;
+	output = LimitInt32(output, -track_loop.turn_max, track_loop.turn_max);
+
+	if(output != 0)
+	{
+		turn_abs = (int32_t)AbsInt32ToU32(output);
+		if((track_loop.turn_min > 0) && (turn_abs < track_loop.turn_min))
+		{
+			output = track_loop.turn_min * SignInt32(output);
+		}
+	}
+
+	track_loop.output = output;
+	return output;
+}
+
+static void TrackLoop10ms(void)
+{
+	int32_t turn;
+	int32_t base;
+
+	if(track_loop.mode == TRACK_MODE_OFF)
+	{
+		return;
+	}
+
+	turn = CalculateTrackTurn();
+	if(track_loop.line_lost != 0u)
+	{
+		if(track_loop.mode == TRACK_MODE_FOLLOW)
+		{
+			if((turn == 0) || (track_loop.lost_ticks >= TRACK_LOST_GRACE_TICKS))
+			{
+				UpdateBothSpeedTarget(0, 0);
+				return;
+			}
+			track_loop.lost_ticks++;
+			UpdateForwardPivotTarget(turn);
+			return;
+		}
+		else
+		{
+			base = 0;
+		}
+	}
+	else if(track_loop.mode == TRACK_MODE_SPIN_ALIGN)
+	{
+		base = 0;
+	}
+	else
+	{
+		base = track_loop.base_speed;
+	}
+
+	if((track_loop.mode == TRACK_MODE_FOLLOW) &&
+	   (AbsInt32ToU32(track_loop.error) >= TRACK_SLOW_ERROR))
+	{
+		base = LimitInt32(base - TRACK_SLOW_DELTA, 0, SPEED_COUNT_MAX);
+	}
+
+	if(track_loop.mode == TRACK_MODE_FOLLOW)
+	{
+		UpdateBothSpeedTarget(LimitInt32(base + turn, 0, SPEED_COUNT_MAX),
+		                      LimitInt32(base - turn, 0, SPEED_COUNT_MAX));
+	}
+	else
+	{
+		UpdateForwardPivotTarget(turn);
+	}
 }
 
 static void SpeedLoop10ms(void)
@@ -518,6 +749,7 @@ static void SpeedLoop10ms(void)
 	left_wheel.actual = EncoderDeltaToSpeed(encoder_b, &left_wheel.last_count, LEFT_ENCODER_DIR);
 	right_wheel.actual = EncoderDeltaToSpeed(encoder_a, &right_wheel.last_count, RIGHT_ENCODER_DIR);
 
+	TrackLoop10ms();
 	CalculateWheelPwm(&left_wheel);
 	CalculateWheelPwm(&right_wheel);
 	MotorOutput(left_wheel.pwm, right_wheel.pwm);
@@ -537,18 +769,24 @@ static void SpeedLoop10ms(void)
 	   (vofa_tick_ms >= vofa_period_ms))
 	{
 		vofa_tick_ms = 0u;
-		printf("%ld,%ld,%ld,%ld,%ld,%ld\r\n",
+		printf("%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%u,%u\r\n",
 		       (long)left_wheel.target,
 		       (long)right_wheel.target,
 		       (long)left_wheel.actual,
 		       (long)right_wheel.actual,
 		       (long)left_wheel.pwm,
-		       (long)right_wheel.pwm);
+		       (long)right_wheel.pwm,
+		       (long)track_loop.error,
+		       (long)track_loop.output,
+		       (unsigned int)track_loop.sensors,
+		       (unsigned int)track_loop.line_mask);
 	}
 }
 
 static void StopSpeedLoop(void)
 {
+	track_loop.mode = TRACK_MODE_OFF;
+	ResetTrackLoop();
 	left_wheel.target = 0;
 	right_wheel.target = 0;
 	ResetWheelState(&left_wheel);
@@ -558,12 +796,21 @@ static void StopSpeedLoop(void)
 
 static void PrintStatus(void)
 {
+	int32_t encoder_a;
+	int32_t encoder_b;
 	uint8_t left_saturated = ((AbsInt32ToU32(left_wheel.pwm) >= PWM_MAX) &&
 	                          (left_wheel.target != left_wheel.actual)) ? 1u : 0u;
 	uint8_t right_saturated = ((AbsInt32ToU32(right_wheel.pwm) >= PWM_MAX) &&
 	                           (right_wheel.target != right_wheel.actual)) ? 1u : 0u;
 
-	printf("LT_CNT10=%ld,RT_CNT10=%ld,LA_CNT10=%ld,RA_CNT10=%ld,LPWM=%ld,RPWM=%ld,SATL=%u,SATR=%u,",
+	__disable_irq();
+	encoder_a = Get_Encoder_countA;
+	encoder_b = Get_Encoder_countB;
+	__enable_irq();
+
+	printf("EA=%ld,EB=%ld,LT_CNT10=%ld,RT_CNT10=%ld,LA_CNT10=%ld,RA_CNT10=%ld,LPWM=%ld,RPWM=%ld,SATL=%u,SATR=%u,",
+	       (long)encoder_a,
+	       (long)encoder_b,
 	       (long)left_wheel.target,
 	       (long)right_wheel.target,
 	       (long)left_wheel.actual,
@@ -587,7 +834,41 @@ static void PrintStatus(void)
 	PrintFixed3("FFL", left_wheel.ff_x1000);
 	printf(",");
 	PrintFixed3("FFR", right_wheel.ff_x1000);
-	printf(",MINPWM=%ld,SLEW=%ld\r\n", (long)min_pwm, (long)pwm_slew);
+	printf(",MINPWM=%ld,SLEW=%ld,TRK=%u,TERR=%ld,TURN=%ld,SENS=0x%02X,LINE=0x%02X,LOST=%u,TBASE=%ld,TMAX=%ld,TMIN=%ld,TDB=%ld,",
+	       (long)min_pwm,
+	       (long)pwm_slew,
+	       (unsigned int)track_loop.mode,
+	       (long)track_loop.error,
+	       (long)track_loop.output,
+	       (unsigned int)track_loop.sensors,
+	       (unsigned int)track_loop.line_mask,
+	       (unsigned int)track_loop.line_lost,
+	       (long)track_loop.base_speed,
+	       (long)track_loop.turn_max,
+	       (long)track_loop.turn_min,
+	       (long)track_loop.deadband);
+	PrintFixed3("TKP", track_loop.kp_x1000);
+	printf(",");
+	PrintFixed3("TKI", track_loop.ki_x1000);
+	printf(",");
+	PrintFixed3("TKD", track_loop.kd_x1000);
+	printf("\r\n");
+}
+
+static void PrintLineStatus(void)
+{
+	uint8_t sensors = Tracking_ReadSensors();
+	uint8_t line_mask;
+	uint8_t line_lost;
+	int32_t error = CalculateLineError(sensors, &line_mask, &line_lost);
+
+	printf("SENS=0x%02X,LINE=0x%02X,ERR=%ld,TURN=%ld,TRK=%u,LOST=%u\r\n",
+	       (unsigned int)sensors,
+	       (unsigned int)line_mask,
+	       (long)error,
+	       (long)track_loop.output,
+	       (unsigned int)track_loop.mode,
+	       (unsigned int)line_lost);
 }
 
 static void ProcessCommand(const char *line)
@@ -759,6 +1040,130 @@ static void ProcessCommand(const char *line)
 		return;
 	}
 
+	if((c0 == 'T') && (c1 == 'R') && (c2 == 'K'))
+	{
+		p += 3;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.mode = (uint8_t)LimitInt32(first, TRACK_MODE_OFF, TRACK_MODE_FOLLOW);
+			ResetTrackLoop();
+			if(track_loop.mode == TRACK_MODE_OFF)
+			{
+				SetBothSpeedTarget(0, 0);
+			}
+			printf("OK TRK %u\r\n", (unsigned int)track_loop.mode);
+		}
+		return;
+	}
+
+	if((c0 == 'T') && (c1 == 'K') && (c2 == 'P'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.kp_x1000 = LimitInt32(first, 0, TRACK_GAIN_MAX_X1000);
+			ResetTrackLoop();
+			printf("OK ");
+			PrintFixed3("TKP", track_loop.kp_x1000);
+			printf("\r\n");
+		}
+		return;
+	}
+
+	if((c0 == 'T') && (c1 == 'K') && (c2 == 'I'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.ki_x1000 = LimitInt32(first, 0, TRACK_GAIN_MAX_X1000);
+			ResetTrackLoop();
+			printf("OK ");
+			PrintFixed3("TKI", track_loop.ki_x1000);
+			printf("\r\n");
+		}
+		return;
+	}
+
+	if((c0 == 'T') && (c1 == 'K') && (c2 == 'D'))
+	{
+		p += 3;
+		if(ParseKpX1000(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.kd_x1000 = LimitInt32(first, 0, TRACK_GAIN_MAX_X1000);
+			ResetTrackLoop();
+			printf("OK ");
+			PrintFixed3("TKD", track_loop.kd_x1000);
+			printf("\r\n");
+		}
+		return;
+	}
+
+	if((c0 == 'T') && (c1 == 'M') && (c2 == 'A'))
+	{
+		p += 4;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.turn_max = LimitInt32(first, 0, SPEED_COUNT_MAX);
+			printf("OK TMAX %ld\r\n", (long)track_loop.turn_max);
+		}
+		return;
+	}
+
+	if((c0 == 'T') && (c1 == 'M') && (c2 == 'I'))
+	{
+		p += 4;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.turn_min = LimitInt32(first, 0, track_loop.turn_max);
+			printf("OK TMIN %ld\r\n", (long)track_loop.turn_min);
+		}
+		return;
+	}
+
+	if((c0 == 'T') && (c1 == 'D') && (c2 == 'B'))
+	{
+		p += 3;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.deadband = LimitInt32(first, 0, 4000);
+			printf("OK TDB %ld\r\n", (long)track_loop.deadband);
+		}
+		return;
+	}
+
+	if((c0 == 'T') && (c1 == 'B') && (c2 == 'A'))
+	{
+		p += 5;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.base_speed = LimitInt32(first, -SPEED_COUNT_MAX, SPEED_COUNT_MAX);
+			printf("OK TBASE %ld\r\n", (long)track_loop.base_speed);
+		}
+		return;
+	}
+
+	if((c0 == 'R') && (c1 == 'U') && (c2 == 'N'))
+	{
+		p += 3;
+		if(ParseInt32(&p, &first) != 0u)
+		{
+			track_loop.base_speed = LimitInt32(first, 0, SPEED_COUNT_MAX);
+		}
+		cmd_quiet_ms = CMD_QUIET_MS;
+		track_loop.mode = TRACK_MODE_FOLLOW;
+		ResetTrackLoop();
+		printf("OK RUN TBASE %ld\r\n", (long)track_loop.base_speed);
+		return;
+	}
+
 	if((c0 == 'M') && (c1 == 'I') && (c2 == 'N'))
 	{
 		if((ToUpperChar(p[3]) == 'P') &&
@@ -833,12 +1238,21 @@ static void ProcessCommand(const char *line)
 		return;
 	}
 
+	if((c0 == 'L') && (c1 == 'I') && (c2 == 'N'))
+	{
+		cmd_quiet_ms = CMD_QUIET_MS;
+		PrintLineStatus();
+		return;
+	}
+
 	if((c0 == 'S') && IsCommandSeparator(p[1]))
 	{
 		p++;
 		if((ParseInt32(&p, &first) != 0u) && (ParseInt32(&p, &second) != 0u))
 		{
 			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.mode = TRACK_MODE_OFF;
+			ResetTrackLoop();
 			SetBothSpeedTarget(first, second);
 			printf("OK SPEED %ld,%ld\r\n", (long)left_wheel.target, (long)right_wheel.target);
 		}
@@ -851,6 +1265,8 @@ static void ProcessCommand(const char *line)
 		if(ParseInt32(&p, &first) != 0u)
 		{
 			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.mode = TRACK_MODE_OFF;
+			ResetTrackLoop();
 			SetSingleSpeedTarget(&left_wheel, &right_wheel, first);
 			printf("OK L %ld, R 0\r\n", (long)left_wheel.target);
 		}
@@ -863,6 +1279,8 @@ static void ProcessCommand(const char *line)
 		if(ParseInt32(&p, &first) != 0u)
 		{
 			cmd_quiet_ms = CMD_QUIET_MS;
+			track_loop.mode = TRACK_MODE_OFF;
+			ResetTrackLoop();
 			SetSingleSpeedTarget(&right_wheel, &left_wheel, first);
 			printf("OK L 0, R %ld\r\n", (long)right_wheel.target);
 		}
@@ -872,7 +1290,7 @@ static void ProcessCommand(const char *line)
 	if((c0 == 'H') || (c0 == '?'))
 	{
 		cmd_quiet_ms = CMD_QUIET_MS;
-		printf("CMD: S lcnt10 rcnt10 | L cnt10 | R cnt10 | KP/KI/KD/FF n | KPL/KPR/KIL/KIR/KDL/KDR/FFL/FFR n | MINPWM n | SLEW n | VOFA 0/1 | RATE ms | STOP | STAT\r\n");
+		printf("CMD: RUN base | TRK 0/1/2 | TBASE/TMAX/TMIN/TDB n | TKP/TKI/TKD n | LINE | S l r | KP/KI/KD/FF n | VOFA 0/1 | RATE ms | STOP | STAT\r\n");
 		return;
 	}
 
@@ -919,7 +1337,7 @@ void Tracking_Init(void)
 	right_wheel.last_count = encoder_a;
 	LoadPidConfig();
 	StopSpeedLoop();
-	printf("Speed loop ready. speed unit=encoder count/10ms. S 20 20 | KP 4 | MINPWM 500 | RATE 100\r\n");
+	printf("Cascade loop ready. RUN 6 follow | TRK 1 spin align | LINE | STAT | STOP\r\n");
 	PrintStatus();
 }
 
